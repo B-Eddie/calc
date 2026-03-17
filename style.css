@@ -103,7 +103,81 @@ input[type="text"] {
     box-sizing: border-box; /* Ensure padding doesn't affect width */
 }
 
+/* Calculator Toolbar */
+.calc-toolbar {
+    display: flex;
+    justify-content: flex-start;
+    align-items: center;
+    padding: 8px 16px;
+    background-color: var(--panel-bg);
+    border-bottom: 1px solid var(--border-color);
+    gap: 16px;
+    font-size: 13px;
+    color: var(--text-secondary);
+}
+
+.mode-toggle {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.mode-divider {
+    color: var(--border-color);
+    margin: 0 8px;
+    font-weight: 300;
+}
+
+.toggle-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    font-size: 11px;
+    padding: 4px 6px;
+    cursor: pointer;
+    border-radius: 4px;
+    font-weight: 600;
+    opacity: 0.6;
+    transition: all 0.2s;
+}
+
+.toggle-btn:hover {
+    background: var(--item-hover);
+    opacity: 1;
+}
+
+.toggle-btn.active {
+    background-color: var(--accent-color);
+    color: #ffffff;
+    opacity: 1;
+}
+
+.func-buttons {
+    display: flex;
+    gap: 6px;
+    flex-wrap: wrap;
+}
+
+.func-buttons button {
+    background: transparent;
+    border: 1px solid var(--border-color);
+    color: var(--text-secondary);
+    border-radius: 4px;
+    padding: 4px 10px;
+    font-size: 12px;
+    cursor: pointer;
+    transition: all 0.2s;
+    font-family: "SF Mono", monospace; /* Monospace for math symbols preferably */
+}
+
+.func-buttons button:hover {
+    background: var(--item-hover);
+    color: var(--text-primary);
+    border-color: var(--text-secondary);
+}
+
 input[type="text"]::placeholder {
+
     color: var(--text-secondary);
     opacity: 0.5;
 }

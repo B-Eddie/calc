@@ -1,6 +1,101 @@
 // Initialize MathJS
 const math = window.math;
 
+// --- TRIGONOMETRY & FUNCTION SETUP ---
+let isDegrees = true; // Default to degrees
+
+// Capture originals before overriding
+const _sin = math.sin;
+const _cos = math.cos;
+const _tan = math.tan;
+const _asin = math.asin;
+const _acos = math.acos;
+const _atan = math.atan;
+const _log = math.log;
+
+function toRad(x) {
+    if (isDegrees && typeof x === 'number') return x * (Math.PI / 180);
+    return x;
+}
+
+function toDeg(x) {
+    if (isDegrees && typeof x === 'number') return x * (180 / Math.PI);
+    return x;
+}
+
+// Override functions
+try {
+    math.import({
+        // Standard Trig (input is angle)
+        sin: function(x) { return _sin(toRad(x)); },
+        cos: function(x) { return _cos(toRad(x)); },
+        tan: function(x) { return _tan(toRad(x)); },
+        
+        // Inverse Trig (output is angle)
+        asin: function(x) { return toDeg(_asin(x)); },
+        acos: function(x) { return toDeg(_acos(x)); },
+        atan: function(x) { return toDeg(_atan(x)); },
+        
+        // Aliases
+        sine: function(x) { return _sin(toRad(x)); },
+        cosine: function(x) { return _cos(toRad(x)); },
+        tangent: function(x) { return _tan(toRad(x)); },
+        arcsin: function(x) { return toDeg(_asin(x)); },
+        arccos: function(x) { return toDeg(_acos(x)); },
+        arctan: function(x) { return toDeg(_atan(x)); },
+
+        // Logarithms
+        ln: function(x) { return _log(x); },
+        log: function(x, base) {
+            // If base provided, use original log
+            if (base !== undefined) return _log(x, base);
+            // Default to base 10 for "log(x)"
+            return math.log10(x); 
+        }
+    }, {override: true});
+} catch (e) {
+    console.error("Error setting up math functions:", e);
+}
+
+function setAngleMode(mode) {
+    const indicator = document.getElementById('mode-indicator');
+    if (mode === 'deg') {
+        isDegrees = true;
+        document.getElementById('btn-deg').classList.add('active');
+        document.getElementById('btn-rad').classList.remove('active');
+        if(indicator) indicator.textContent = '(DEG)';
+    } else {
+        isDegrees = false;
+        document.getElementById('btn-rad').classList.add('active');
+        document.getElementById('btn-deg').classList.remove('active');
+        if(indicator) indicator.textContent = '(RAD)';
+    }
+    // Re-evaluate current expression
+    updateCalculator();
+}
+
+
+function insertFunction(fnStr) {
+    const input = document.getElementById('calc-input');
+    const startPos = input.selectionStart || input.value.length;
+    const endPos = input.selectionEnd || input.value.length;
+    
+    const textBefore = input.value.substring(0, startPos);
+    const textAfter = input.value.substring(endPos, input.value.length);
+    
+    input.value = textBefore + fnStr + textAfter;
+    
+    // Move cursor inside parenthesis
+    // If string ends with (, move cursor there. If ends with ^, move after it.
+    let newPos = startPos + fnStr.length;
+    // Special adjustment for empty parens? Nah just put cursor at end of inserted text
+    
+    input.focus();
+    input.setSelectionRange(newPos, newPos);
+    
+    updateCalculator();
+}
+
 function switchTab(tabId, btnElement) {
     document.querySelectorAll('.content-section').forEach(el => el.classList.remove('active'));
     document.querySelectorAll('.tab-btn').forEach(el => el.classList.remove('active'));
