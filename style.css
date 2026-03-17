@@ -1,0 +1,261 @@
+:root {
+    --bg-color: #191919;
+    --panel-bg: #222222;
+    --border-color: #333333;
+    --text-primary: #ffffff;
+    --text-secondary: #888888;
+    --accent-color: #FF6363; /* Raycast-ish red/orange accent */
+    --item-hover: #2c2c2c;
+    --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+    --window-width: 600px;
+    --window-radius: 12px;
+}
+
+body {
+    margin: 0;
+    height: 100vh;
+    font-family: var(--font-stack);
+    background-color: #0e0e0e; /* Darker background behind the 'window' */
+    display: flex;
+    justify-content: center;
+    align-items: center; /* Center visuals like Raycast overlay */
+    color: var(--text-primary);
+    overflow: hidden;
+}
+
+/* The Raycast "Window" */
+.app-container {
+    width: var(--window-width);
+    background-color: var(--bg-color);
+    border: 1px solid var(--border-color);
+    border-radius: var(--window-radius);
+    box-shadow: 0 50px 100px -20px rgba(0, 0, 0, 0.5), 0 30px 60px -30px rgba(0, 0, 0, 0.6);
+    display: flex;
+    flex-direction: column;
+    max-height: 80vh;
+    overflow: hidden;
+    position: relative;
+    animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+}
+
+@keyframes popIn {
+    from { opacity: 0; transform: scale(0.98); }
+    to { opacity: 1; transform: scale(1); }
+}
+
+/* Navigation / Mode Switcher */
+.nav-tabs {
+    display: flex;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--border-color);
+    background: var(--bg-color); /* Match top bar */
+    gap: 8px;
+}
+
+.tab-btn {
+    background: transparent;
+    border: none;
+    color: var(--text-secondary);
+    padding: 6px 12px;
+    font-size: 13px;
+    font-weight: 500;
+    cursor: pointer;
+    border-radius: 6px;
+    transition: all 0.2s;
+}
+
+.tab-btn:hover {
+    background-color: var(--item-hover);
+    color: var(--text-primary);
+}
+
+.tab-btn.active {
+    background-color: var(--item-hover);
+    color: var(--text-primary);
+    font-weight: 600;
+}
+
+/* Main Content Area */
+.content-section {
+    display: none;
+    flex-direction: column;
+}
+
+.content-section.active {
+    display: flex;
+}
+
+/* Calculator Input Area (Raycast Search Bar Style) */
+.input-area {
+    padding: 16px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+input[type="text"] {
+    width: 100%;
+    background: transparent;
+    border: none;
+    font-size: 24px;
+    color: var(--text-primary);
+    outline: none;
+    font-weight: 300;
+    font-family: var(--font-stack);
+    box-sizing: border-box; /* Ensure padding doesn't affect width */
+}
+
+input[type="text"]::placeholder {
+    color: var(--text-secondary);
+    opacity: 0.5;
+}
+
+/* Results Area */
+.result-area {
+    padding: 0;
+    background-color: var(--bg-color);
+}
+
+.result-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    padding: 14px 20px;
+    border-bottom: 1px solid #252525;
+}
+
+.result-row:last-child {
+    border-bottom: none;
+}
+
+.result-label {
+    color: var(--text-secondary);
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    width: 80px;
+}
+
+.result-value {
+    flex-grow: 1;
+    text-align: right;
+    font-size: 22px; /* Standard size for list items/roots */
+    font-weight: 500;
+    color: var(--text-primary);
+}
+
+/* Specific override for main calculator result to be huge */
+#calc-result {
+    font-size: 42px;
+    font-weight: 700;
+    letter-spacing: -1px;
+    padding: 10px 0;
+    color: #ffffff;
+    text-shadow: 0 0 20px rgba(255, 255, 255, 0.1);
+}
+
+/* LaTeX container adjustments */
+.latex-display {
+    padding: 12px 20px;
+    display: flex;
+    justify-content: center;
+    align-items: center;
+    background: rgba(255, 99, 99, 0.08); /* Tiny tint of accent */
+    min-height: 40px;
+    border-top: 1px solid var(--border-color);
+    overflow-x: auto;
+    color: var(--accent-color); /* Make formula distinct with accent color */
+    font-size: 0.85em;
+    font-family: "KaTeX_Main", "Times New Roman", serif; /* Ensure math font feel */
+}
+
+/* Quadratic Form Styles */
+/* ... */
+
+.quad-equation-preview {
+    padding: 16px;
+    text-align: center;
+    border-bottom: 1px solid var(--border-color);
+    background: rgba(255, 99, 99, 0.08); /* Match calculator formula style */
+    min-height: 20px;
+    color: var(--accent-color);
+    font-size: 0.9em;
+}
+
+
+/* Quadratic Form Styles */
+.form-grid {
+    display: grid;
+    grid-template-columns: repeat(3, 1fr);
+    gap: 16px;
+    padding: 20px;
+    border-bottom: 1px solid var(--border-color);
+}
+
+.input-group {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.input-group label {
+    font-size: 11px;
+    color: var(--text-secondary);
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}color: var(--text-secondary)
+.input-group input {
+    background: var(--item-hover);
+    border: 1px solid transparent;
+    border-radius: 6px;
+    padding: 10px 12px;
+    font-size: 16px;
+    color: white;
+    transition: all 0.2s;
+    width: 100%;
+    box-sizing: border-box;
+}
+
+.input-group input:focus {
+    border-color: var(--text-secondary); /* Raycast uses subtle highlight */
+    background: #333;
+}
+
+.quad-equation-preview {
+    padding: 20px;
+    text-align: center;
+    border-bottom: 1px solid var(--border-color);
+    background: #111;
+    min-height: 20px;
+}
+
+/* Footer / Actions Bar */
+.footer {
+    display: flex;
+    justify-content: flex-end; /* Align to right like Raycast */
+    padding: 8px 12px;
+    background: var(--bg-color);
+    border-top: 1px solid var(--border-color);
+    font-size: 12px;
+    color: var(--text-secondary);
+    gap: 16px;
+}
+
+.action-item {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    opacity: 0.8;
+}
+
+.key-hint {
+    background: #333;
+    padding: 2px 6px;
+    border-radius: 4px;
+    color: #ccc;
+    font-family: -apple-system, BlinkMacSystemFont, monospace; /* System font looks cleaner for keys */
+    font-size: 11px;
+    min-width: 12px;
+    text-align: center;
+    box-shadow: 0 1px 0 rgba(0,0,0,0.2);
+}

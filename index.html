@@ -1,0 +1,84 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>RayCalc</title>
+    
+    <!-- KaTeX -->
+    <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.css">
+    <script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.9/dist/katex.min.js"></script>
+
+    <!-- MathJS -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.0/math.js"></script>
+
+    <link rel="stylesheet" href="style.css">
+</head>
+<body>
+    
+    <div class="app-container">
+        <!-- Search/Input Bar Area -->
+        <nav class="nav-tabs">
+            <button class="tab-btn active" onclick="switchTab('calculator', this)">Calculator</button>
+            <button class="tab-btn" onclick="switchTab('quadratic', this)">Quadratic Solver</button>
+        </nav>
+
+        <!-- CALCULATOR SECTION -->
+        <div id="calculator" class="content-section active">
+            <div class="input-area">
+                <input type="text" id="calc-input" placeholder="Type an expression..." autocomplete="off" autofocus>
+            </div>
+            
+            <div class="result-area">
+                <div class="result-row">
+                    <span class="result-label">RESULT</span>
+                    <span id="calc-result" class="result-value"></span>
+                </div>
+                <!-- LaTeX Render -->
+                <div id="calc-latex" class="latex-display"></div>
+            </div>
+
+            <div class="footer">
+                <div class="action-item">
+                    <span class="key-hint">↵</span>
+                    <span>Replace Input</span>
+                </div>
+            </div>
+        </div>
+
+        <!-- QUADRATIC SECTION -->
+        <div id="quadratic" class="content-section">
+            <div class="form-grid">
+                <div class="input-group">
+                    <label>A</label>
+                    <input type="text" id="quad-a" placeholder="1">
+                </div>
+                <div class="input-group">
+                    <label>B</label>
+                    <input type="text" id="quad-b" placeholder="4">
+                </div>
+                <div class="input-group">
+                    <label>C</label>
+                    <input type="text" id="quad-c" placeholder="2">
+                </div>
+            </div>
+
+            <div id="quad-equation-preview" class="quad-equation-preview"></div>
+
+            <div class="result-area"> <!-- Use result-area for consistent look -->
+                <div class="result-row">
+                    <span class="result-label">ROOT 1</span>
+                    <span id="quad-result-x1" class="result-value"></span>
+                </div>
+                <div class="result-row">
+                    <span class="result-label">ROOT 2</span>
+                    <span id="quad-result-x2" class="result-value"></span>
+                </div>
+            </div>
+        </div>
+
+    </div>
+
+    <script src="script.js"></script>
+</body>
+</html>
