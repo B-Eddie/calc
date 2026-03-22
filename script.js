@@ -79,6 +79,16 @@ try {
         // Default to base 10 for "log(x)"
         return math.log10(x);
       },
+      // log2, log3, etc. for explicit base via function name
+      ...(() => {
+        const customLogs = {};
+        for (let b = 2; b <= 36; b++) {
+          customLogs[`log${b}`] = function (x) {
+            return _log(x, b);
+          };
+        }
+        return customLogs;
+      })(),
     },
     { override: true },
   );
@@ -160,10 +170,17 @@ function updateCalculator() {
   }
 
   try {
+    // Preprocess logN without parentheses: "log2 8" => "log2(8)"
+    const normalizedExpression = expression.replace(
+      /\b(log\d+)\s+(\([^)]*\)|[^\s()+\-*/^,]+)/g,
+      "$1($2)",
+    );
+
     // Parse and compile for LaTeX
-    const node = math.parse(expression);
+    const node = math.parse(normalizedExpression);
 
     // Normalize bare log(x) to log10(x) for LaTeX rendering (mathjs default log is ln)
+    // also normalize logN(x) to log(x, N) for nicer LaTeX via indexed log where possible
     const texNode = node.transform(function (n) {
       if (
         n.type === "FunctionNode" &&
@@ -172,6 +189,19 @@ function updateCalculator() {
       ) {
         return new math.FunctionNode("log10", [n.args[0]]);
       }
+
+      if (
+        n.type === "FunctionNode" &&
+        /^log\d+$/.test(n.name) &&
+        n.args.length === 1
+      ) {
+        const base = Number(n.name.slice(3));
+        return new math.FunctionNode("log", [
+          n.args[0],
+          new math.ConstantNode(base),
+        ]);
+      }
+
       return n;
     });
 
