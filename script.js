@@ -130,7 +130,16 @@ function updateCalculator() {
     try {
         // Parse and compile for LaTeX
         const node = math.parse(expression);
-        const latex = node.toTex({parenthesis: 'keep', implicit: 'hide'});
+
+        // Normalize bare log(x) to log10(x) for LaTeX rendering (mathjs default log is ln)
+        const texNode = node.transform(function (n) {
+            if (n.type === 'FunctionNode' && n.name === 'log' && n.args.length === 1) {
+                return new math.FunctionNode('log10', [n.args[0]]);
+            }
+            return n;
+        });
+
+        const latex = texNode.toTex({parenthesis: 'keep', implicit: 'hide'});
         
         // Render LaTeX
         katex.render(latex, calcLatex, {
