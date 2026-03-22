@@ -171,10 +171,10 @@ function updateCalculator() {
 
   try {
     // Preprocess logN without parentheses: "log2 8" => "log2(8)"
-    const normalizedExpression = expression.replace(
-      /\b(log\d+)\s+(\([^)]*\)|[^\s()+\-*/^,]+)/g,
-      "$1($2)",
-    );
+    // Preprocess log followed immediately by digits (e.g. log23) into log(23)
+    const normalizedExpression = expression
+      .replace(/\b(log\d+)\s+(\([^)]*\)|[^\s()+\-*/^,]+)/g, "$1($2)")
+      .replace(/\blog(\d+)\b(?!\s|\()/g, "log($1)");
 
     // Parse and compile for LaTeX
     const node = math.parse(normalizedExpression);
