@@ -96,6 +96,53 @@ try {
   console.error("Error setting up math functions:", e);
 }
 
+function normalizeFunctionSyntax(expression) {
+  // Convert cases like sin25 or sin 25 into sin(25), plus support cos/tan/etc.
+  const fnList = [
+    "sin",
+    "cos",
+    "tan",
+    "asin",
+    "acos",
+    "atan",
+    "sine",
+    "cosine",
+    "tangent",
+    "arcsin",
+    "arccos",
+    "arctan",
+    "ln",
+    "log",
+    "sqrt",
+    "abs",
+  ];
+
+  const fnPattern = fnList.join("|");
+
+  // Add explicit multiplication before a function name when coming after a number or closing parenthesis.
+  expression = expression.replace(
+    new RegExp(`(\\d|\\))\\s*(?=(?:${fnPattern}))`, "gi"),
+    "$1*",
+  );
+
+  // Auto-wrap function arguments in parentheses when missing.
+  // Supports forms like sin25, sin 25, 18sin25 without requiring standard word boundary after function name.
+  const fnArgRegex = new RegExp(
+    `(^|[^a-zA-Z0-9_])(${fnPattern})(?!\\s*\\()\\s*([-+]?\\d*\\.?\\d+|[a-zA-Z]\\w*|\\([^()]*\\))`,
+    "gi",
+  );
+
+  let prev;
+  do {
+    prev = expression;
+    expression = expression.replace(fnArgRegex, (match, prefix, fn, arg) => {
+      return `${prefix}${fn}(${arg})`;
+    });
+  } while (expression !== prev);
+
+  return expression;
+}
+
 function setAngleMode(mode) {
   const indicator = document.getElementById("mode-indicator");
   if (mode === "deg") {
@@ -172,9 +219,12 @@ function updateCalculator() {
   try {
     // Preprocess logN without parentheses: "log2 8" => "log2(8)"
     // Preprocess log followed immediately by digits (e.g. log23) into log(23)
-    const normalizedExpression = expression
+    let normalizedExpression = expression
       .replace(/\b(log\d+)\s+(\([^)]*\)|[^\s()+\-*/^,]+)/g, "$1($2)")
       .replace(/\blog(\d+)\b(?!\s|\()/g, "log($1)");
+
+    // Auto-normalize trig/function shorthand like sin25, cos 30, etc.
+    normalizedExpression = normalizeFunctionSyntax(normalizedExpression);
 
     // Parse and compile for LaTeX
     const node = math.parse(normalizedExpression);
