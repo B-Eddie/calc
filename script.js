@@ -220,6 +220,7 @@ function updateCalculator() {
     // Preprocess logN without parentheses: "log2 8" => "log2(8)"
     // Preprocess log followed immediately by digits (e.g. log23) into log(23)
     let normalizedExpression = expression
+      .replace(/,/g, "")
       .replace(/\b(log\d+)\s+(\([^)]*\)|[^\s()+\-*/^,]+)/g, "$1($2)")
       .replace(/\blog(\d+)\b(?!\s|\()/g, "log($1)");
 
