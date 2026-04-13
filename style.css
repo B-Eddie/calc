@@ -322,7 +322,21 @@ input[type="text"]::placeholder {
     opacity: 0.8;
 }
 
-.key-hint {
+.molar-result-value {
+    font-size: 32px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+}
+
+.molar-breakdown-row {
+    opacity: 0.75;
+}
+
+.molar-breakdown-value {
+    font-size: 15px;
+    font-weight: 400;
+    color: var(--text-secondary);
+}
     background: #333;
     padding: 2px 6px;
     border-radius: 4px;
