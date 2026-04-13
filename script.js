@@ -195,6 +195,8 @@ function switchTab(tabId, btnElement) {
   // Auto focus appropriate input
   if (tabId === "calculator") {
     setTimeout(() => document.getElementById("calc-input").focus(), 50);
+  } else if (tabId === "molar-mass") {
+    setTimeout(() => document.getElementById("molar-input").focus(), 50);
   } else {
     setTimeout(() => document.getElementById("quad-a").focus(), 50);
   }
@@ -437,3 +439,166 @@ quadC.addEventListener("input", solveQuadratic);
 // Initial run
 solveQuadratic();
 updateCalculator();
+
+// ==========================================
+// Molar Mass Logic
+// ==========================================
+
+const ATOMIC_MASSES = {
+  H: 1.008, He: 4.003, Li: 6.941, Be: 9.012, B: 10.811, C: 12.011,
+  N: 14.007, O: 15.999, F: 18.998, Ne: 20.180, Na: 22.990, Mg: 24.305,
+  Al: 26.982, Si: 28.086, P: 30.974, S: 32.065, Cl: 35.453, Ar: 39.948,
+  K: 39.098, Ca: 40.078, Sc: 44.956, Ti: 47.867, V: 50.942, Cr: 51.996,
+  Mn: 54.938, Fe: 55.845, Co: 58.933, Ni: 58.693, Cu: 63.546, Zn: 65.38,
+  Ga: 69.723, Ge: 72.63, As: 74.922, Se: 78.971, Br: 79.904, Kr: 83.798,
+  Rb: 85.468, Sr: 87.62, Y: 88.906, Zr: 91.224, Nb: 92.906, Mo: 95.95,
+  Tc: 98, Ru: 101.07, Rh: 102.906, Pd: 106.42, Ag: 107.868, Cd: 112.414,
+  In: 114.818, Sn: 118.71, Sb: 121.76, Te: 127.6, I: 126.904, Xe: 131.293,
+  Cs: 132.905, Ba: 137.327, La: 138.905, Ce: 140.116, Pr: 140.908, Nd: 144.242,
+  Pm: 145, Sm: 150.36, Eu: 151.964, Gd: 157.25, Tb: 158.925, Dy: 162.5,
+  Ho: 164.930, Er: 167.259, Tm: 168.934, Yb: 173.045, Lu: 174.967,
+  Hf: 178.49, Ta: 180.948, W: 183.84, Re: 186.207, Os: 190.23, Ir: 192.217,
+  Pt: 195.084, Au: 196.967, Hg: 200.592, Tl: 204.38, Pb: 207.2, Bi: 208.980,
+  Po: 209, At: 210, Rn: 222, Fr: 223, Ra: 226, Ac: 227, Th: 232.038,
+  Pa: 231.036, U: 238.029, Np: 237, Pu: 244, Am: 243, Cm: 247, Bk: 247,
+  Cf: 251, Es: 252, Fm: 257, Md: 258, No: 259, Lr: 262,
+};
+
+// Parse a chemical formula string into { element: count } map.
+// Handles nested parentheses and numeric multipliers.
+function parseChemFormula(formula) {
+  let i = 0;
+
+  function parseGroup() {
+    const counts = {};
+    while (i < formula.length) {
+      if (formula[i] === "(") {
+        i++; // skip '('
+        const inner = parseGroup();
+        i++; // skip ')'
+        const numStart = i;
+        while (i < formula.length && /\d/.test(formula[i])) i++;
+        const mult = i > numStart ? parseInt(formula.slice(numStart, i), 10) : 1;
+        for (const [el, cnt] of Object.entries(inner)) {
+          counts[el] = (counts[el] || 0) + cnt * mult;
+        }
+      } else if (formula[i] === ")") {
+        break;
+      } else if (/[A-Z]/.test(formula[i])) {
+        let el = formula[i++];
+        while (i < formula.length && /[a-z]/.test(formula[i])) el += formula[i++];
+        const numStart = i;
+        while (i < formula.length && /\d/.test(formula[i])) i++;
+        const cnt = i > numStart ? parseInt(formula.slice(numStart, i), 10) : 1;
+        counts[el] = (counts[el] || 0) + cnt;
+      } else {
+        i++; // skip unexpected char
+      }
+    }
+    return counts;
+  }
+
+  return parseGroup();
+}
+
+// Convert a chemical formula string to a LaTeX string with subscripts.
+function formulaToLatex(formula) {
+  let result = "";
+  let i = 0;
+  while (i < formula.length) {
+    const ch = formula[i];
+    if (/[A-Z]/.test(ch)) {
+      let el = ch;
+      i++;
+      while (i < formula.length && /[a-z]/.test(formula[i])) el += formula[i++];
+      result += `\\mathrm{${el}}`;
+    } else if (/\d/.test(ch)) {
+      let num = ch;
+      i++;
+      while (i < formula.length && /\d/.test(formula[i])) num += formula[i++];
+      result += `_{${num}}`;
+    } else {
+      result += ch;
+      i++;
+    }
+  }
+  return result;
+}
+
+function updateMolarMass() {
+  const molarInput = document.getElementById("molar-input");
+  const molarLatex = document.getElementById("molar-latex");
+  const molarResult = document.getElementById("molar-result");
+  const molarBreakdown = document.getElementById("molar-breakdown");
+
+  const formula = molarInput.value.trim();
+
+  if (!formula) {
+    molarLatex.innerHTML = "";
+    molarResult.textContent = "";
+    molarBreakdown.innerHTML = "";
+    return;
+  }
+
+  try {
+    // Validate: formula must start with an uppercase letter or '('
+    if (!/^[A-Z(]/.test(formula)) throw new Error("Invalid formula");
+
+    const counts = parseChemFormula(formula);
+    const elements = Object.keys(counts);
+    if (elements.length === 0) throw new Error("No elements found");
+
+    // Check all elements are in the periodic table
+    for (const el of elements) {
+      if (!(el in ATOMIC_MASSES)) throw new Error(`Unknown element: ${el}`);
+    }
+
+    // Render LaTeX formula
+    const latex = formulaToLatex(formula);
+    katex.render(latex, molarLatex, { throwOnError: false, displayMode: true });
+
+    // Compute molar mass
+    let total = 0;
+    for (const [el, cnt] of Object.entries(counts)) {
+      total += ATOMIC_MASSES[el] * cnt;
+    }
+
+    molarResult.textContent = total.toFixed(3) + " g/mol";
+
+    // Render element breakdown rows
+    molarBreakdown.innerHTML = "";
+    for (const [el, cnt] of Object.entries(counts)) {
+      const contrib = ATOMIC_MASSES[el] * cnt;
+      const row = document.createElement("div");
+      row.className = "result-row molar-breakdown-row";
+
+      const label = document.createElement("span");
+      label.className = "result-label";
+      katex.render(
+        cnt > 1 ? `${cnt}\\times\\mathrm{${el}}` : `\\mathrm{${el}}`,
+        label,
+        { throwOnError: false },
+      );
+
+      const value = document.createElement("span");
+      value.className = "result-value molar-breakdown-value";
+      value.textContent = contrib.toFixed(3) + " g/mol";
+
+      row.appendChild(label);
+      row.appendChild(value);
+      molarBreakdown.appendChild(row);
+    }
+  } catch (err) {
+    molarLatex.innerHTML = "";
+    molarResult.textContent = err.message || "Invalid formula";
+    molarResult.style.color = "var(--accent-color)";
+    molarResult.style.fontSize = "16px";
+    molarBreakdown.innerHTML = "";
+    return;
+  }
+
+  molarResult.style.color = "";
+  molarResult.style.fontSize = "";
+}
+
+document.getElementById("molar-input").addEventListener("input", updateMolarMass);

@@ -34,6 +34,9 @@
         <button class="tab-btn" onclick="switchTab('quadratic', this)">
           Quadratic Solver
         </button>
+        <button class="tab-btn" onclick="switchTab('molar-mass', this)">
+          Molar Mass
+        </button>
       </nav>
 
       <!-- CALCULATOR SECTION -->
@@ -130,6 +133,27 @@
             <span class="result-label">ROOT 2</span>
             <span id="quad-result-x2" class="result-value"></span>
           </div>
+        </div>
+      </div>
+      <!-- MOLAR MASS SECTION -->
+      <div id="molar-mass" class="content-section">
+        <div class="input-area">
+          <input
+            type="text"
+            id="molar-input"
+            placeholder="Enter a formula… e.g. H2O or Ca(OH)2"
+            autocomplete="off"
+          />
+        </div>
+
+        <div id="molar-latex" class="latex-display"></div>
+
+        <div class="result-area">
+          <div class="result-row">
+            <span class="result-label">MOLAR MASS</span>
+            <span id="molar-result" class="result-value molar-result-value"></span>
+          </div>
+          <div id="molar-breakdown"></div>
         </div>
       </div>
     </div>
