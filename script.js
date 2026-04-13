@@ -283,11 +283,16 @@ function updateCalculator() {
 
 calcInput.addEventListener("input", updateCalculator);
 calcInput.addEventListener("keydown", (e) => {
-  if (e.key === "Enter") {
+  if (e.key === "Enter" && (e.metaKey || e.ctrlKey) && e.shiftKey) {
     const currentResult = calcResult.textContent;
     if (currentResult) {
       calcInput.value = currentResult;
       updateCalculator();
+    }
+  } else if (e.key === "Enter") {
+    const currentResult = calcResult.textContent;
+    if (currentResult) {
+      navigator.clipboard.writeText(currentResult);
     }
   }
 });
@@ -301,6 +306,8 @@ const quadC = document.getElementById("quad-c");
 const quadPreview = document.getElementById("quad-equation-preview");
 const resX1 = document.getElementById("quad-result-x1");
 const resX2 = document.getElementById("quad-result-x2");
+
+let lastQuadResult = "";
 
 function solveQuadratic() {
   const rawA = quadA.value || "1";
@@ -360,8 +367,10 @@ function solveQuadratic() {
     if (a === 0) {
       // If a=0, it's linear: bx + c = 0 -> x = -c/b
       if (b === 0) {
-        resX1.innerHTML = c === 0 ? "Infinite solutions" : "No solution";
+        const msg = c === 0 ? "Infinite solutions" : "No solution";
+        resX1.innerHTML = msg;
         resX2.innerHTML = "";
+        lastQuadResult = msg;
       } else {
         const x = -c / b;
         const xFrac = math.fraction(x);
@@ -374,6 +383,7 @@ function solveQuadratic() {
 
         katex.render(`x = ${xValTex}`, resX1, { throwOnError: false });
         resX2.innerHTML = "";
+        lastQuadResult = `x = ${math.format(x, { precision: 5 })}`;
       }
       return;
     }
@@ -408,6 +418,7 @@ function solveQuadratic() {
 
       x1Tex = `x_1 = ${formatRoot(x1)}`;
       x2Tex = `x_2 = ${formatRoot(x2)}`;
+      lastQuadResult = `x1 = ${math.format(x1, { precision: 5 })}\nx2 = ${math.format(x2, { precision: 5 })}`;
     } else {
       // Complex roots
       const realPart = -b / (2 * a);
@@ -419,6 +430,7 @@ function solveQuadratic() {
 
       x1Tex = `x_1 = ${realStr} + ${imagStr}i`;
       x2Tex = `x_2 = ${realStr} - ${imagStr}i`;
+      lastQuadResult = `x1 = ${realStr} + ${imagStr}i\nx2 = ${realStr} - ${imagStr}i`;
     }
 
     katex.render(x1Tex, resX1, { throwOnError: false });
@@ -428,6 +440,7 @@ function solveQuadratic() {
     quadPreview.textContent = "Invalid Input";
     resX1.innerHTML = "";
     resX2.innerHTML = "";
+    lastQuadResult = "";
   }
 }
 
@@ -435,6 +448,13 @@ function solveQuadratic() {
 quadA.addEventListener("input", solveQuadratic);
 quadB.addEventListener("input", solveQuadratic);
 quadC.addEventListener("input", solveQuadratic);
+
+function copyQuadResult() {
+  if (lastQuadResult) navigator.clipboard.writeText(lastQuadResult);
+}
+quadA.addEventListener("keydown", (e) => { if (e.key === "Enter") copyQuadResult(); });
+quadB.addEventListener("keydown", (e) => { if (e.key === "Enter") copyQuadResult(); });
+quadC.addEventListener("keydown", (e) => { if (e.key === "Enter") copyQuadResult(); });
 
 // Initial run
 solveQuadratic();
@@ -602,3 +622,9 @@ function updateMolarMass() {
 }
 
 document.getElementById("molar-input").addEventListener("input", updateMolarMass);
+document.getElementById("molar-input").addEventListener("keydown", (e) => {
+  if (e.key === "Enter") {
+    const result = document.getElementById("molar-result").textContent;
+    if (result) navigator.clipboard.writeText(result);
+  }
+});
