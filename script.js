@@ -583,7 +583,7 @@ function updateMolarMass() {
       total += ATOMIC_MASSES[el] * cnt;
     }
 
-    molarResult.textContent = total.toFixed(3) + " g/mol";
+    molarResult.textContent = total.toFixed(2) + " g/mol";
 
     // Render element breakdown rows
     molarBreakdown.innerHTML = "";
@@ -602,7 +602,7 @@ function updateMolarMass() {
 
       const value = document.createElement("span");
       value.className = "result-value molar-breakdown-value";
-      value.textContent = contrib.toFixed(3) + " g/mol";
+      value.textContent = contrib.toFixed(2) + " g/mol";
 
       row.appendChild(label);
       row.appendChild(value);
