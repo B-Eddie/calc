@@ -590,9 +590,15 @@ function updateMolarMass() {
     }
   } catch (err) {
     molarLatex.innerHTML = "";
-    molarResult.textContent = "";
+    molarResult.textContent = err.message || "Invalid formula";
+    molarResult.style.color = "var(--accent-color)";
+    molarResult.style.fontSize = "16px";
     molarBreakdown.innerHTML = "";
+    return;
   }
+
+  molarResult.style.color = "";
+  molarResult.style.fontSize = "";
 }
 
 document.getElementById("molar-input").addEventListener("input", updateMolarMass);
