@@ -1,0 +1,64 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Render Math — Calc</title>
+  <link rel="stylesheet" href="/render/style.css">
+  <!-- KaTeX CSS -->
+  <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.css" integrity="sha256-oZJrjv3j0X8qEeF6+o3mQ1i6lq1f0qD8xq4nVZtJ4jo=" crossorigin="anonymous">
+</head>
+<body>
+  <main class="container">
+    <header>
+      <h1>Render Math</h1>
+      <p>Paste LaTeX / Markdown (with math) here and see a live preview. Typst support is a placeholder for now.</p>
+    </header>
+
+    <section class="editor-row">
+      <div class="panel">
+        <div class="panel-header">
+          <label for="input">Input</label>
+          <div class="controls">
+            <label class="small">Detected: <span id="detected">—</span></label>
+            <label for="format-override" class="small">Override:</label>
+            <select id="format-override">
+              <option value="auto">Auto</option>
+              <option value="latex">LaTeX</option>
+              <option value="markdown">Markdown</option>
+              <option value="typst">Typst (placeholder)</option>
+            </select>
+          </div>
+        </div>
+        <textarea id="input" placeholder="Paste your LaTeX, Markdown, or Typst here..."></textarea>
+      </div>
+
+      <div class="panel">
+        <div class="panel-header">
+          <label for="preview">Preview</label>
+          <div class="controls">
+            <button id="copy-html">Copy HTML</button>
+          </div>
+        </div>
+        <div id="preview" class="preview" aria-live="polite"></div>
+      </div>
+    </section>
+
+    <section class="notes">
+      <h2>Notes</h2>
+      <ul>
+        <li>Auto-detection heuristics: LaTeX markers (\\begin, $$, \\[) will favor LaTeX rendering; markdown markers (#, lists, fenced code) will favor Markdown with math support.</li>
+        <li>Typst: in-browser Typst rendering requires a WebAssembly build and is not included in this initial change. A placeholder option is provided; let me know if you want Typst WASM included now.</li>
+        <li>KaTeX is used to render math (fast, client-side). Markdown rendering uses markdown-it + markdown-it-katex so inline $...$ and $$...$$ work inside Markdown.</li>
+      </ul>
+    </section>
+
+  </main>
+
+  <!-- Libraries (KaTeX then markdown-it and plugin) -->
+  <script src="https://cdn.jsdelivr.net/npm/katex@0.16.4/dist/katex.min.js" integrity="sha256-ZsYxg6n1y1Y+8h+YwL7Q2j5mE3p+v8Q2r3zWv1sK8Jc=" crossorigin="anonymous"></script>
+  <script src="https://cdn.jsdelivr.net/npm/markdown-it@13.0.1/dist/markdown-it.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/markdown-it-katex@3.0.1/dist/markdown-it-katex.min.js"></script>
+  <script src="/render/app.js"></script>
+</body>
+</html>
