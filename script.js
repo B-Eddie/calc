@@ -795,7 +795,7 @@ function detectFormat(text) {
   const outsideMath = t.replace(inlineMathReGlobal, " ").trim();
   if (
     score.markdown === 0 &&
-    !/\\\[|\$\$|\\[a-zA-Z]{2,}(?=\s*\{)/.test(t) &&
+    !/\\\[|\$\$|\\[a-zA-Z]{2,}/.test(t) &&
     outsideMath.split(/\s+/).length >= 4 &&
     /[a-zA-Z]{4,}/.test(outsideMath)
   ) {
@@ -896,7 +896,7 @@ function katexHtmlForSegment(seg) {
 function tokenizeLatex(src) {
   const segments = [];
   const re =
-    /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\3\}|\$([^$\n]+?)\$(?!\d)/g;
+    /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\3\}|\$([^$\n]+?)\$(?!\d)|\\\(([\s\S]+?)\\\)/g;
   let last = 0;
   let m;
   while ((m = re.exec(src)) !== null) {
@@ -917,6 +917,8 @@ function tokenizeLatex(src) {
       });
     } else if (m[5] !== undefined) {
       segments.push({ math: true, display: false, kind: "inline", tex: m[5] });
+    } else if (m[6] !== undefined) {
+      segments.push({ math: true, display: false, kind: "inline", tex: m[6] });
     }
     last = re.lastIndex;
   }
@@ -924,6 +926,98 @@ function tokenizeLatex(src) {
     segments.push({ math: false, text: src.slice(last) });
   }
   return segments;
+}
+
+// Split text into alternating word/whitespace tokens (keeping everything).
+function tokenizeProse(text) {
+  const tokens = [];
+  let last = 0;
+  const re = /\s+/g;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m.index > last) {
+      tokens.push({ text: text.slice(last, m.index), isWs: false });
+    }
+    tokens.push({ text: m[0], isWs: true });
+    last = re.lastIndex;
+  }
+  if (last < text.length) {
+    tokens.push({ text: text.slice(last), isWs: false });
+  }
+  return tokens;
+}
+
+// True when a whitespace-delimited token belongs to a math expression rather
+// than prose ("a", "(p", "x_i", "2a" → true; "and", "if", "e.g." → false).
+function isMathishToken(tok) {
+  if (!tok) return false;
+  if (/\\/.test(tok)) return true; // contains a LaTeX command → part of the math
+  if (/[a-zA-Z]{3,}/.test(tok)) return false; // real words stay prose
+  if (/^[a-zA-Z]\.[a-zA-Z]\.?[.,;:!?'"]*$/.test(tok)) return false; // "e.g."-style abbreviations
+  if (/[a-zA-Z]{2,}/.test(tok) && !/[\d^_()[\]{}]/.test(tok)) return false; // short words ("if", "to")
+  return true;
+}
+
+// In plain-text segments, find runs that contain LaTeX commands (e.g.
+// "(p\nmid a)") and render them as inline math, leaving the surrounding prose
+// untouched. Any run that fails to compile stays as plain text.
+function inlineCommandsToHtml(prose) {
+  const tokens = tokenizeProse(prose);
+  const out = [];
+  const cmdRe = /\\[a-zA-Z]+/;
+  let i = 0;
+  while (i < tokens.length) {
+    const tok = tokens[i];
+    if (tok.isWs || !cmdRe.test(tok.text)) {
+      // Prose tokens must stay escaped (only whitespace is safe raw).
+      out.push(tok.isWs ? tok.text : escapeHtml(tok.text));
+      i++;
+      continue;
+    }
+    // Anchor token contains a command — expand to a math span.
+    let start = i;
+    while (
+      start >= 2 &&
+      tokens[start - 1].isWs &&
+      !/\n/.test(tokens[start - 1].text) &&
+      isMathishToken(tokens[start - 2].text)
+    ) {
+      start -= 2;
+    }
+    let end = i + 1;
+    while (
+      end + 1 < tokens.length &&
+      tokens[end].isWs &&
+      !/\n/.test(tokens[end].text) &&
+      isMathishToken(tokens[end + 1].text)
+    ) {
+      end += 2;
+    }
+    const raw = tokens
+      .slice(start, end)
+      .map((t) => t.text)
+      .join("");
+    // Sentence punctuation right after the math stays as prose.
+    const pm = raw.match(/[.,;:!?'"]+$/);
+    const span = pm ? raw.slice(0, -pm[0].length) : raw;
+    let html;
+    if (span.length <= 120) {
+      try {
+        html = katex.renderToString(span, {
+          throwOnError: true,
+          displayMode: false,
+          strict: false,
+        });
+      } catch (e) {
+        html = escapeHtml(span); // not valid math → keep as plain text
+      }
+    } else {
+      html = escapeHtml(span);
+    }
+    out.push(html, pm ? pm[0] : "");
+    i = end;
+  }
+  return out.join("");
 }
 
 // Turn mixed segments (plain text + math) into HTML. Plain text stays as
@@ -945,7 +1039,7 @@ function mixedLatexHtml(segments) {
       for (let i = 0; i < parts.length; i++) {
         const part = parts[i].replace(/^\s+/, ""); // strip leading whitespace only
         if (!part) continue; // skip whitespace runs (e.g. stray newline after a display block)
-        para.push(escapeHtml(part).replace(/\n/g, "<br>"));
+        para.push(inlineCommandsToHtml(part).replace(/\n/g, "<br>"));
         if (i < parts.length - 1) flush();
       }
     } else if (seg.display) {
@@ -994,11 +1088,20 @@ function renderLatexToDom(source) {
       return;
     }
 
-    // Normalize bare [ ... ] display-math blocks (brackets alone on their own lines)
+    // Normalize bare [ ... ] display-math blocks (brackets alone on their own
+    // lines). All of them, not just the first. Blocks that don't look like
+    // math (e.g. a bracketed note) stay literal.
     tex = tex.replace(
-      /^[ \t]*\[[ \t]*\r?\n([\s\S]*?)^[ \t]*\][ \t]*\r?$/m,
-      (match, inner) =>
-        /\\[a-zA-Z]|[\^_]/.test(inner) ? `\\[${inner.trim()}\\]` : match,
+      /^[ \t]*\[[ \t]*\r?\n([\s\S]*?)^[ \t]*\][ \t]*\r?$/gm,
+      (match, inner) => {
+        const body = inner.trim();
+        const looksMath =
+          /\\[a-zA-Z]|[\^_]/.test(body) ||
+          (body.length <= 40 &&
+            !/[a-zA-Z]{3,}/.test(body) &&
+            !/^[a-zA-Z\s]*$/.test(body));
+        return looksMath ? `\\[${body}\\]` : match;
+      },
     );
 
     const segments = tokenizeLatex(tex);
