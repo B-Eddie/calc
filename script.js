@@ -746,11 +746,15 @@ function detectFormat(text) {
   // --- LaTeX signals ---
   if (/\\\[|\\\]|\$\$/.test(t)) score.latex += 4;
   score.latex += Math.min(
-    (t.match(/\\[a-zA-Z]{2,}(?=\s*[\{\[\s\\])/g) || []).length,
+    (t.match(/\\[a-zA-Z]{2,}(?=\s*[\{\[\s\\\d])/g) || []).length,
     5,
   );
   if (/\\[a-zA-Z]+\{[^}]*\}/.test(t)) score.latex += 1;
   if (/\\[()\[\]]/.test(t)) score.latex += 1;
+  // Bare [ ... ] display-math block (brackets alone on their own lines)
+  if (/^[ \t]*\[[ \t]*\r?\n/m.test(t) && /^[ \t]*\][ \t]*\r?$/m.test(t)) {
+    score.latex += 3;
+  }
 
   // --- Typst signals ---
   const typstKeyword =
@@ -840,6 +844,136 @@ function setOutputPlaceholder() {
 }
 
 // --------------------------- LaTeX (KaTeX) ---------------------------
+// Map a LaTeX environment to a KaTeX-supported one.
+function wrapLatexEnv(envName, inner) {
+  let env = envName.replace(/\*$/, "");
+  const supported = [
+    "aligned",
+    "alignedat",
+    "gathered",
+    "split",
+    "cases",
+    "matrix",
+    "pmatrix",
+    "bmatrix",
+    "Bmatrix",
+    "vmatrix",
+    "Vmatrix",
+    "array",
+    "smallmatrix",
+  ];
+  const wrap =
+    env === "align" || env === "equation" || env === "eqnarray"
+      ? "aligned"
+      : env === "gather" || env === "multline"
+        ? "gathered"
+        : supported.includes(env)
+          ? env
+          : "aligned";
+  return `\\begin{${wrap}}${inner}\\end{${wrap}}`;
+}
+
+// Render a single math segment to HTML (shared by the LaTeX and Markdown
+// renderers). A bad segment degrades to an inline error instead of failing
+// the whole render.
+function katexHtmlForSegment(seg) {
+  try {
+    const options = {
+      throwOnError: false,
+      displayMode: seg.display,
+      strict: false,
+    };
+    if (seg.kind === "env") {
+      return katex.renderToString(wrapLatexEnv(seg.env, seg.tex), options);
+    }
+    return katex.renderToString(seg.tex, options);
+  } catch (e) {
+    return `<span class="render-error">${escapeHtml(seg.tex)}</span>`;
+  }
+}
+
+// Split source into alternating plain-text / math segments.
+function tokenizeLatex(src) {
+  const segments = [];
+  const re =
+    /\$\$([\s\S]+?)\$\$|\\\[([\s\S]+?)\\\]|\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\3\}|\$([^$\n]+?)\$(?!\d)/g;
+  let last = 0;
+  let m;
+  while ((m = re.exec(src)) !== null) {
+    if (m.index > last) {
+      segments.push({ math: false, text: src.slice(last, m.index) });
+    }
+    if (m[1] !== undefined) {
+      segments.push({ math: true, display: true, kind: "display", tex: m[1] });
+    } else if (m[2] !== undefined) {
+      segments.push({ math: true, display: true, kind: "display", tex: m[2] });
+    } else if (m[3] !== undefined) {
+      segments.push({
+        math: true,
+        display: true,
+        kind: "env",
+        env: m[3],
+        tex: m[4],
+      });
+    } else if (m[5] !== undefined) {
+      segments.push({ math: true, display: false, kind: "inline", tex: m[5] });
+    }
+    last = re.lastIndex;
+  }
+  if (last < src.length) {
+    segments.push({ math: false, text: src.slice(last) });
+  }
+  return segments;
+}
+
+// Turn mixed segments (plain text + math) into HTML. Plain text stays as
+// untouched paragraphs; inline math flows inside them; display math becomes
+// its own centered block.
+function mixedLatexHtml(segments) {
+  const html = [];
+  let para = [];
+  const flush = () => {
+    const trimmed = para.join("").trim();
+    if (trimmed) html.push(`<p>${trimmed}</p>`);
+    para = [];
+  };
+
+  for (const seg of segments) {
+    if (!seg.math) {
+      // Plain text may contain blank-line paragraph breaks
+      const parts = seg.text.split(/\n\s*\n+/);
+      for (let i = 0; i < parts.length; i++) {
+        const part = parts[i].replace(/^\s+/, ""); // strip leading whitespace only
+        if (!part) continue; // skip whitespace runs (e.g. stray newline after a display block)
+        para.push(escapeHtml(part).replace(/\n/g, "<br>"));
+        if (i < parts.length - 1) flush();
+      }
+    } else if (seg.display) {
+      flush();
+      html.push(katexHtmlForSegment(seg));
+    } else {
+      para.push(katexHtmlForSegment(seg));
+    }
+  }
+  flush();
+  return html.join("");
+}
+
+// True when a delimiter-free chunk is really a math expression, not prose.
+function isLikelyMathExpression(tex) {
+  const t = tex.trim();
+  if (!t) return false;
+  // Bare function-call math like "log(x)" or "sin(x)" (no backslash needed)
+  if (/\b(?:log|ln|sin|cos|tan|sqrt|exp|abs|min|max|floor|ceil|gcd|mod)\s*\(/i.test(t)) {
+    return true;
+  }
+  const stripped = t
+    .replace(/\\[a-zA-Z]+/g, "")
+    .replace(/[\d\s()[\]{}+*/^_=,.\\:;'"|]/g, "");
+  if (/[a-zA-Z]{4,}/.test(stripped)) return false; // real words → prose
+  return /\\[a-zA-Z]/.test(t) || /[a-z0-9)](\^|_)/.test(t) || /[=+\-*/^]/.test(t);
+}
+
 function renderLatexToDom(source) {
   const out = renderOutput;
   const text = source.trim();
@@ -860,61 +994,33 @@ function renderLatexToDom(source) {
       return;
     }
 
-    let math;
-    let displayMode = true;
+    // Normalize bare [ ... ] display-math blocks (brackets alone on their own lines)
+    tex = tex.replace(
+      /^[ \t]*\[[ \t]*\r?\n([\s\S]*?)^[ \t]*\][ \t]*\r?$/m,
+      (match, inner) =>
+        /\\[a-zA-Z]|[\^_]/.test(inner) ? `\\[${inner.trim()}\\]` : match,
+    );
 
-    // LaTeX environment (align/equation/gather/multline/matrix/cases...)
-    const envMatch = tex.match(/\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\1\}/);
-    if (envMatch) {
-      let env = envMatch[1];
-      if (env.endsWith("*")) env = env.slice(0, -1);
-      const supported = [
-        "aligned",
-        "alignedat",
-        "gathered",
-        "split",
-        "cases",
-        "matrix",
-        "pmatrix",
-        "bmatrix",
-        "Bmatrix",
-        "vmatrix",
-        "Vmatrix",
-        "array",
-        "smallmatrix",
-      ];
-      const wrap =
-        env === "align" || env === "equation" || env === "eqnarray"
-          ? "aligned"
-          : env === "gather" || env === "multline"
-            ? "gathered"
-            : supported.includes(env)
-              ? env
-              : "aligned";
-      math = `\\begin{${wrap}}${envMatch[2]}\\end{${wrap}}`;
-    } else {
-      // Display math $$...$$ or \[...\]
-      const display =
-        tex.match(/\$\$([\s\S]+?)\$\$/) || tex.match(/\\\[([\s\S]+?)\\\]/);
-      if (display) {
-        math = (display[1] || "").trim();
-        if (!math) {
-          out.innerHTML = "<div class=\"render-error\">Empty math block.</div>";
-          return;
-        }
-      } else {
-        // Inline $...$ → render just the math
-        const inline = tex.match(/\$([^$\n]+)\$/);
-        if (inline && inline[1].trim()) math = inline[1].trim();
-        else math = tex;
+    const segments = tokenizeLatex(tex);
+    const hasMath = segments.some((s) => s.math);
+
+    if (hasMath) {
+      // A lone inline $...$ with nothing around it → show it as display math
+      if (segments.length === 1 && segments[0].kind === "inline") {
+        segments[0].display = true;
       }
+      out.innerHTML = mixedLatexHtml(segments);
+    } else if (isLikelyMathExpression(tex)) {
+      // Pure math expression without delimiters → render it as display math
+      katex.render(tex, out, {
+        throwOnError: false,
+        displayMode: true,
+        strict: false,
+      });
+    } else {
+      // Just prose → render it as text paragraphs
+      out.innerHTML = mixedLatexHtml(segments);
     }
-
-    katex.render(math, out, {
-      throwOnError: false,
-      displayMode: displayMode,
-      strict: false,
-    });
   } catch (err) {
     out.innerHTML = `<div class="render-error">LaTeX error: ${escapeHtml(
       err && err.message ? err.message : String(err),
@@ -926,15 +1032,33 @@ function renderLatexToDom(source) {
 function renderMarkdownToDom(source) {
   const out = renderOutput;
   try {
-    // Extract $...$ and $$...$$ math first so Marked never touches the TeX.
+    // Protect inline code spans first so any $ or \[ inside them is never
+    // treated as TeX.
+    const codeSpans = [];
+    let processed = source.replace(/`([^`\n]+)`/g, (m, inner) => {
+      codeSpans.push(inner);
+      return `@@CODE${codeSpans.length - 1}@@`;
+    });
+
+    // Extract $...$, $$...$$, \[...\] and \begin{env} math first so Marked
+    // never touches the TeX. (\[ is skipped when it's an escaped-bracket
+    // link like \[text\](url).)
     const placeholders = [];
-    let processed = source
+    processed = processed
       .replace(/\$\$([\s\S]+?)\$\$/g, (m, inner) => {
-        placeholders.push({ tex: inner, display: true });
+        placeholders.push({ tex: inner, display: true, kind: "display" });
+        return `@@MATH${placeholders.length - 1}@@`;
+      })
+      .replace(/\\\[([\s\S]+?)\\\](?![\t ]*\()/g, (m, inner) => {
+        placeholders.push({ tex: inner, display: true, kind: "display" });
+        return `@@MATH${placeholders.length - 1}@@`;
+      })
+      .replace(/\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\1\}/g, (m, env, inner) => {
+        placeholders.push({ tex: inner, display: true, kind: "env", env });
         return `@@MATH${placeholders.length - 1}@@`;
       })
       .replace(/(^|[^$\d])\$([^$\n]+?)\$(?!\d)/g, (m, pre, inner) => {
-        placeholders.push({ tex: inner, display: false });
+        placeholders.push({ tex: inner, display: false, kind: "inline" });
         return `${pre}@@MATH${placeholders.length - 1}@@`;
       });
 
@@ -942,18 +1066,15 @@ function renderMarkdownToDom(source) {
       ? marked.parse(processed, { breaks: true, gfm: true })
       : escapeHtml(processed).replace(/\n/g, "<br>");
     const safe = sanitizeHtml(html);
-    const finalHtml = safe.replace(/@@MATH(\d+)@@/g, (m, idx) => {
+    let finalHtml = safe.replace(/@@MATH(\d+)@@/g, (m, idx) => {
       const p = placeholders[+idx];
       if (!p) return m;
-      try {
-        return katex.renderToString(p.tex, {
-          throwOnError: false,
-          displayMode: p.display,
-          strict: false,
-        });
-      } catch (e) {
-        return `<span class="render-error">${escapeHtml(p.tex)}</span>`;
-      }
+      return katexHtmlForSegment(p);
+    });
+    // Restore protected code spans as proper <code> elements.
+    finalHtml = finalHtml.replace(/@@CODE(\d+)@@/g, (m, idx) => {
+      const c = codeSpans[+idx];
+      return c !== undefined ? `<code>${escapeHtml(c)}</code>` : m;
     });
     out.innerHTML = finalHtml;
   } catch (err) {
