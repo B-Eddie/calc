@@ -216,6 +216,8 @@ function switchTab(tabId, btnElement) {
         }
         // Warm up the Typst engine in the background so the first Typst render is snappy
         ensureTypst();
+        // Re-apply the saved pane split now that the section is visible
+        reclampPaneWidth();
       }
     }, 50);
   } else {
@@ -1358,3 +1360,188 @@ renderInput.addEventListener("keydown", (e) => {
 });
 
 setOutputPlaceholder();
+
+// ==========================================
+// Window + Render split resizing
+// ==========================================
+const MIN_WINDOW_W = 420;
+const MIN_WINDOW_H = 340;
+const MIN_PANE_W = 160;
+const MIN_OUTPUT_W = 200;
+
+const appContainerEl = document.querySelector(".app-container");
+const resizeHandleEl = document.getElementById("resize-handle");
+const renderSplitEl = document.querySelector(".render-split");
+const renderDividerEl = document.getElementById("render-divider");
+const renderInputPaneEl = document.querySelector(".render-input-pane");
+
+function clampNum(v, lo, hi) {
+  return Math.min(Math.max(v, lo), hi);
+}
+
+function windowMaxWidth() {
+  return Math.max(MIN_WINDOW_W, window.innerWidth - 16);
+}
+
+function windowMaxHeight() {
+  return Math.min(window.innerHeight - 16, window.innerHeight * 0.8);
+}
+
+// ------------------- Window resize -------------------
+let windowSizeSet = false;
+
+function saveWindowSize() {
+  try {
+    // Use the rendered box (not offsetWidth) so restoring style.width doesn't
+    // accumulate the 1px borders on each save/restore cycle.
+    const r = appContainerEl.getBoundingClientRect();
+    localStorage.setItem(
+      "raycalc-window-size",
+      JSON.stringify({ w: Math.round(r.width), h: Math.round(r.height) }),
+    );
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+function restoreWindowSize() {
+  try {
+    const saved = JSON.parse(localStorage.getItem("raycalc-window-size"));
+    if (saved && saved.w) {
+      windowSizeSet = true;
+      appContainerEl.style.width =
+        clampNum(saved.w, MIN_WINDOW_W, windowMaxWidth()) + "px";
+      if (saved.h) {
+        appContainerEl.style.height =
+          clampNum(saved.h, MIN_WINDOW_H, windowMaxHeight()) + "px";
+      }
+    }
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+resizeHandleEl.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  windowSizeSet = true;
+  appContainerEl.classList.add("resizing");
+  document.body.classList.add("no-select");
+  resizeHandleEl.classList.add("dragging");
+  resizeHandleEl.setPointerCapture(e.pointerId);
+  const startX = e.clientX;
+  const startY = e.clientY;
+  const startRect = appContainerEl.getBoundingClientRect();
+  const startW = startRect.width || appContainerEl.offsetWidth;
+  const startH = startRect.height || appContainerEl.offsetHeight;
+  const onMove = (ev) => {
+    appContainerEl.style.width =
+      clampNum(startW + ev.clientX - startX, MIN_WINDOW_W, windowMaxWidth()) + "px";
+    appContainerEl.style.height =
+      clampNum(startH + ev.clientY - startY, MIN_WINDOW_H, windowMaxHeight()) + "px";
+  };
+  const onUp = () => {
+    appContainerEl.classList.remove("resizing");
+    document.body.classList.remove("no-select");
+    resizeHandleEl.classList.remove("dragging");
+    resizeHandleEl.removeEventListener("pointermove", onMove);
+    resizeHandleEl.removeEventListener("pointerup", onUp);
+    resizeHandleEl.removeEventListener("pointercancel", onUp);
+    saveWindowSize();
+  };
+  resizeHandleEl.addEventListener("pointermove", onMove);
+  resizeHandleEl.addEventListener("pointerup", onUp);
+  resizeHandleEl.addEventListener("pointercancel", onUp);
+});
+
+// ------------------- Render split divider -------------------
+function clampPaneWidth(px, splitW) {
+  if (!splitW) return px;
+  return clampNum(px, MIN_PANE_W, Math.max(MIN_PANE_W, splitW - MIN_OUTPUT_W));
+}
+
+function setInputPaneWidth(px) {
+  renderInputPaneEl.style.width = px + "px";
+}
+
+// Persist only on discrete actions (drag end / reset), not on every move.
+function saveDividerPosition() {
+  try {
+    const cur = parseInt(renderInputPaneEl.style.width, 10);
+    if (isFinite(cur)) {
+      localStorage.setItem("raycalc-render-divider", String(cur));
+    }
+  } catch (e) {
+    /* ignore */
+  }
+}
+
+function reclampPaneWidth() {
+  const splitW = renderSplitEl.clientWidth;
+  if (!splitW) return; // section not visible yet
+  const cur =
+    renderInputPaneEl.getBoundingClientRect().width ||
+    renderInputPaneEl.offsetWidth ||
+    splitW / 2;
+  setInputPaneWidth(clampPaneWidth(cur, splitW));
+}
+
+// Restore a previously dragged split position (width is clamped when visible).
+(function restoreDivider() {
+  try {
+    const saved = parseFloat(localStorage.getItem("raycalc-render-divider"));
+    if (isFinite(saved) && saved > 0) setInputPaneWidth(saved);
+  } catch (e) {
+    /* ignore */
+  }
+})();
+
+renderDividerEl.addEventListener("pointerdown", (e) => {
+  if (e.button !== 0) return;
+  e.preventDefault();
+  document.body.classList.add("no-select");
+  renderDividerEl.classList.add("dragging");
+  renderDividerEl.setPointerCapture(e.pointerId);
+  const startX = e.clientX;
+  const startW =
+    renderInputPaneEl.getBoundingClientRect().width ||
+    renderInputPaneEl.offsetWidth;
+  const onMove = (ev) => {
+    const splitW = renderSplitEl.clientWidth;
+    setInputPaneWidth(clampPaneWidth(startW + ev.clientX - startX, splitW));
+  };
+  const onUp = () => {
+    document.body.classList.remove("no-select");
+    renderDividerEl.classList.remove("dragging");
+    renderDividerEl.removeEventListener("pointermove", onMove);
+    renderDividerEl.removeEventListener("pointerup", onUp);
+    renderDividerEl.removeEventListener("pointercancel", onUp);
+    saveDividerPosition();
+  };
+  renderDividerEl.addEventListener("pointermove", onMove);
+  renderDividerEl.addEventListener("pointerup", onUp);
+  renderDividerEl.addEventListener("pointercancel", onUp);
+});
+
+// Double-click the divider to reset to a 50/50 split.
+renderDividerEl.addEventListener("dblclick", () => {
+  const splitW = renderSplitEl.clientWidth;
+  if (!splitW) return;
+  setInputPaneWidth(clampPaneWidth(Math.floor(splitW / 2), splitW));
+  saveDividerPosition();
+});
+
+// Keep the resized window inside the viewport and panes usable when the
+// browser window itself changes size.
+window.addEventListener("resize", () => {
+  if (windowSizeSet) {
+    appContainerEl.style.width =
+      clampNum(appContainerEl.offsetWidth, MIN_WINDOW_W, windowMaxWidth()) + "px";
+    appContainerEl.style.height =
+      clampNum(appContainerEl.offsetHeight, MIN_WINDOW_H, windowMaxHeight()) + "px";
+  }
+  reclampPaneWidth();
+});
+
+restoreWindowSize();
+reclampPaneWidth();
