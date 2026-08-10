@@ -192,11 +192,32 @@ function switchTab(tabId, btnElement) {
   document.getElementById(tabId).classList.add("active");
   if (btnElement) btnElement.classList.add("active");
 
+  // Widen the window while the two-pane render section is active
+  const appContainer = document.querySelector(".app-container");
+  if (appContainer) {
+    appContainer.classList.toggle("render-mode", tabId === "render");
+  }
+
   // Auto focus appropriate input
   if (tabId === "calculator") {
     setTimeout(() => document.getElementById("calc-input").focus(), 50);
   } else if (tabId === "molar-mass") {
     setTimeout(() => document.getElementById("molar-input").focus(), 50);
+  } else if (tabId === "render") {
+    setTimeout(() => {
+      const renderInputEl = document.getElementById("render-input");
+      if (renderInputEl) {
+        renderInputEl.focus();
+        // Load a sample on first visit so the section demos itself
+        if (!renderVisited) {
+          renderVisited = true;
+          renderInputEl.value = RENDER_SAMPLES.markdown;
+          doRender();
+        }
+        // Warm up the Typst engine in the background so the first Typst render is snappy
+        ensureTypst();
+      }
+    }, 50);
   } else {
     setTimeout(() => document.getElementById("quad-a").focus(), 50);
   }
@@ -628,3 +649,488 @@ document.getElementById("molar-input").addEventListener("keydown", (e) => {
     if (result) navigator.clipboard.writeText(result);
   }
 });
+
+// ==========================================
+// Render Section (LaTeX / Typst / Markdown)
+// ==========================================
+
+// WASM modules for the Typst compiler + renderer (pinned to match typst.ts@0.7.0)
+const TYPST_COMPILER_WASM =
+  "https://cdn.jsdelivr.net/npm/@myriaddreamin/typst-ts-web-compiler@0.7.0/pkg/typst_ts_web_compiler_bg.wasm";
+const TYPST_RENDERER_WASM =
+  "https://cdn.jsdelivr.net/npm/@myriaddreamin/typst-ts-renderer@0.7.0/pkg/typst_ts_renderer_bg.wasm";
+
+// Prepended to Typst source so pages are transparent, auto-sized and readable on the dark theme.
+// User #set statements (which come later) still take precedence.
+const TYPST_PREAMBLE =
+  '#set page(width: auto, height: auto, margin: 1em, fill: none)\n' +
+  '#set text(fill: rgb("#e6e6e6"))\n';
+
+// Example snippets, one per format
+const RENDER_SAMPLES = {
+  latex:
+    "\\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}",
+  typst:
+    "= Pythagorean Theorem\n\n" +
+    "For a right triangle, $a^2 + b^2 = c^2$, where $c$ is the hypotenuse.\n\n" +
+    "$ c = sqrt(a^2 + b^2) $\n\n" +
+    "#block(\n" +
+    '  fill: rgb("#2c2c2c"),\n' +
+    "  inset: 10pt,\n" +
+    "  radius: 6pt,\n" +
+    ")[\n" +
+    "  The quadratic formula:\n" +
+    "  $ x = (-b ± sqrt(b^2 - 4 a c)) / (2a) $\n" +
+    "]",
+  markdown:
+    "# Quadratic Formula\n\n" +
+    "The roots of the quadratic $ax^2 + bx + c = 0$ are given by\n\n" +
+    "$$\nx = \\frac{-b \\pm \\sqrt{b^2 - 4ac}}{2a}\n$$\n\n" +
+    "- $a$, $b$, $c$ are real numbers\n" +
+    "- Works when $a \\neq 0$",
+};
+
+let currentRenderMode = "auto";
+let renderVisited = false;
+let renderDebounceTimer = null;
+let typstBusy = false;
+let typstQueued = false;
+let typstReady = false;
+let typstInitPromise = null;
+let typstInitAttempts = 0;
+
+const renderInput = document.getElementById("render-input");
+const renderOutput = document.getElementById("render-output");
+
+function escapeHtml(str) {
+  return String(str)
+    .replace(/&/g, "&amp;")
+    .replace(/</g, "&lt;")
+    .replace(/>/g, "&gt;")
+    .replace(/"/g, "&quot;")
+    .replace(/'/g, "&#39;");
+}
+
+// Remove dangerous tags/attributes from rendered Markdown HTML
+function sanitizeHtml(html) {
+  const container = document.createElement("div");
+  container.innerHTML = html;
+  container
+    .querySelectorAll("script, style, iframe, object, embed, link, meta, form")
+    .forEach((n) => n.remove());
+  container.querySelectorAll("*").forEach((el) => {
+    [...el.attributes].forEach((attr) => {
+      const name = attr.name.toLowerCase();
+      const value = attr.value.toLowerCase();
+      if (name.startsWith("on") || /^\s*javascript:/.test(value)) {
+        el.removeAttribute(attr.name);
+      }
+    });
+  });
+  return container.innerHTML;
+}
+
+// Best-effort detection of LaTeX / Typst / Markdown from raw text.
+// Returns "latex" | "typst" | "markdown" | null (for empty input).
+function detectFormat(text) {
+  const t = text.trim();
+  if (!t) return null;
+
+  // Unambiguous structural signals first.
+  if (/\\begin\{[a-zA-Z*]+\}|\\(documentclass|usepackage)\b/.test(t)) return "latex";
+  if (/^#{1,6}[ \t]/m.test(t)) return "markdown"; // "# Heading" is Markdown (Typst headings use "=")
+  if (/^=+[ \t]/m.test(t)) return "typst"; // "= Heading" is Typst
+
+  let score = { latex: 0, typst: 0, markdown: 0 };
+
+  // --- LaTeX signals ---
+  if (/\\\[|\\\]|\$\$/.test(t)) score.latex += 4;
+  score.latex += Math.min(
+    (t.match(/\\[a-zA-Z]{2,}(?=\s*[\{\[\s\\])/g) || []).length,
+    5,
+  );
+  if (/\\[a-zA-Z]+\{[^}]*\}/.test(t)) score.latex += 1;
+  if (/\\[()\[\]]/.test(t)) score.latex += 1;
+
+  // --- Typst signals ---
+  const typstKeyword =
+    /#(set|show|let|import|align|text|block|figure|table|grid|image|outline|bibliography|cite|link|enum|list|page|parbreak|quote|box|pad|place|rect|circle|line|arrow|curve|polygon|path|math|columns|stack|heading)\b/;
+  if (typstKeyword.test(t)) score.typst += 4;
+  if (/[_^]\s*\(/.test(t)) score.typst += 2; // x_(n) / x^(n) style groups
+  if (/\$[^$\n]+(->|=>|\^\(|_\(|\s+\/)/.test(t)) score.typst += 2; // typst-ish math constructs
+  // Bare function calls inside $...$ (Typst style), e.g. $sqrt(x)$ or $sin(x)$
+  if (
+    /\$[^$\n]*\b(sqrt|sin|cos|tan|arctan|arcsin|arccos|log|exp|floor|ceil|abs|min|max|sum|prod|integral|diff|delta|gamma|alpha|beta|pi|infinity|arrow)\s*\(/.test(
+      t,
+    )
+  ) {
+    score.typst += 3;
+  }
+
+  // --- Markdown signals ---
+  if (/^[-*][ \t]/m.test(t)) score.markdown += 2;
+  if (/^\d+[.)][ \t]/m.test(t)) score.markdown += 2;
+  if (/^>[ \t]/m.test(t)) score.markdown += 2;
+  if (/\*\*[^*]+\*\*/.test(t)) score.markdown += 2;
+  if (/\[[^\]]+\]\([^)\s]+\)/.test(t)) score.markdown += 2;
+  if (/`[^`\n]+`/.test(t)) score.markdown += 1;
+  if (/^---+$/m.test(t)) score.markdown += 1;
+
+  // --- Inline math $...$: Typst if mixed with Typst keywords, else LaTeX ---
+  // (Guarded so prices/currency like "$5 and $3" aren't treated as math.)
+  const inlineMathRe = /(^|[^$\d])\$([^$\n]+?)\$(?!\d)/;
+  const inlineMathReGlobal = new RegExp(inlineMathRe.source, "g");
+  if (inlineMathRe.test(t)) {
+    if (typstKeyword.test(t)) score.typst += 3;
+    else score.latex += 2;
+  }
+
+  // A prose sentence with a bit of embedded math → render as Markdown.
+  // (Requires a real 4+ letter word so bare equations like "x^2 + 3x - 4 = 0"
+  // don't get misread as prose.)
+  const outsideMath = t.replace(inlineMathReGlobal, " ").trim();
+  if (
+    score.markdown === 0 &&
+    !/\\\[|\$\$|\\[a-zA-Z]{2,}(?=\s*\{)/.test(t) &&
+    outsideMath.split(/\s+/).length >= 4 &&
+    /[a-zA-Z]{4,}/.test(outsideMath)
+  ) {
+    score.markdown += 4;
+  }
+
+  // Bare single-line math expression without delimiters, e.g. "x^2 + 3x - 4 = 0"
+  if (
+    !t.includes("\n") &&
+    score.latex === 0 &&
+    score.typst === 0 &&
+    score.markdown === 0 &&
+    /[a-zA-Z0-9)](\^|_)/.test(t) &&
+    /[=\+\-\*/\^]/.test(t)
+  ) {
+    score.latex += 2;
+  }
+
+  if (score.typst > score.latex && score.typst >= score.markdown) return "typst";
+  if (score.markdown >= score.latex && score.markdown > 0) return "markdown";
+  if (score.latex > 0) return "latex";
+  if (score.typst > 0) return "typst";
+  return "markdown";
+}
+
+function updateDetectedBadge(fmt) {
+  const badge = document.getElementById("render-detected");
+  if (!badge) return;
+  if (currentRenderMode !== "auto") {
+    const label =
+      currentRenderMode.charAt(0).toUpperCase() + currentRenderMode.slice(1);
+    badge.textContent = `mode: ${label}`;
+    return;
+  }
+  if (!fmt) {
+    badge.textContent = "auto-detect";
+    return;
+  }
+  const label = fmt.charAt(0).toUpperCase() + fmt.slice(1);
+  badge.textContent = `detected: ${label}`;
+}
+
+function setOutputPlaceholder() {
+  renderOutput.innerHTML =
+    '<div class="render-empty">Rendered output appears here — start typing or paste something.</div>';
+}
+
+// --------------------------- LaTeX (KaTeX) ---------------------------
+function renderLatexToDom(source) {
+  const out = renderOutput;
+  const text = source.trim();
+
+  try {
+    // Full documents need a TeX engine — give a friendly hint instead.
+    if (/\\documentclass|\\begin\{document\}/.test(text)) {
+      out.innerHTML =
+        "<div class=\"render-error\">Full LaTeX documents aren\u2019t supported here. Paste a math expression, snippet, or environment instead.</div>";
+      return;
+    }
+
+    let tex = text
+      .replace(/\\begin\{document\}[\s\S]*?\\end\{document\}/, "")
+      .trim();
+    if (!tex) {
+      out.innerHTML = "<div class=\"render-error\">No math found.</div>";
+      return;
+    }
+
+    let math;
+    let displayMode = true;
+
+    // LaTeX environment (align/equation/gather/multline/matrix/cases...)
+    const envMatch = tex.match(/\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\1\}/);
+    if (envMatch) {
+      let env = envMatch[1];
+      if (env.endsWith("*")) env = env.slice(0, -1);
+      const supported = [
+        "aligned",
+        "alignedat",
+        "gathered",
+        "split",
+        "cases",
+        "matrix",
+        "pmatrix",
+        "bmatrix",
+        "Bmatrix",
+        "vmatrix",
+        "Vmatrix",
+        "array",
+        "smallmatrix",
+      ];
+      const wrap =
+        env === "align" || env === "equation" || env === "eqnarray"
+          ? "aligned"
+          : env === "gather" || env === "multline"
+            ? "gathered"
+            : supported.includes(env)
+              ? env
+              : "aligned";
+      math = `\\begin{${wrap}}${envMatch[2]}\\end{${wrap}}`;
+    } else {
+      // Display math $$...$$ or \[...\]
+      const display =
+        tex.match(/\$\$([\s\S]+?)\$\$/) || tex.match(/\\\[([\s\S]+?)\\\]/);
+      if (display) {
+        math = (display[1] || "").trim();
+        if (!math) {
+          out.innerHTML = "<div class=\"render-error\">Empty math block.</div>";
+          return;
+        }
+      } else {
+        // Inline $...$ → render just the math
+        const inline = tex.match(/\$([^$\n]+)\$/);
+        if (inline && inline[1].trim()) math = inline[1].trim();
+        else math = tex;
+      }
+    }
+
+    katex.render(math, out, {
+      throwOnError: false,
+      displayMode: displayMode,
+      strict: false,
+    });
+  } catch (err) {
+    out.innerHTML = `<div class="render-error">LaTeX error: ${escapeHtml(
+      err && err.message ? err.message : String(err),
+    )}</div>`;
+  }
+}
+
+// --------------------------- Markdown (marked + KaTeX math) ---------------------------
+function renderMarkdownToDom(source) {
+  const out = renderOutput;
+  try {
+    // Extract $...$ and $$...$$ math first so Marked never touches the TeX.
+    const placeholders = [];
+    let processed = source
+      .replace(/\$\$([\s\S]+?)\$\$/g, (m, inner) => {
+        placeholders.push({ tex: inner, display: true });
+        return `@@MATH${placeholders.length - 1}@@`;
+      })
+      .replace(/(^|[^$\d])\$([^$\n]+?)\$(?!\d)/g, (m, pre, inner) => {
+        placeholders.push({ tex: inner, display: false });
+        return `${pre}@@MATH${placeholders.length - 1}@@`;
+      });
+
+    const html = window.marked
+      ? marked.parse(processed, { breaks: true, gfm: true })
+      : escapeHtml(processed).replace(/\n/g, "<br>");
+    const safe = sanitizeHtml(html);
+    const finalHtml = safe.replace(/@@MATH(\d+)@@/g, (m, idx) => {
+      const p = placeholders[+idx];
+      if (!p) return m;
+      try {
+        return katex.renderToString(p.tex, {
+          throwOnError: false,
+          displayMode: p.display,
+          strict: false,
+        });
+      } catch (e) {
+        return `<span class="render-error">${escapeHtml(p.tex)}</span>`;
+      }
+    });
+    out.innerHTML = finalHtml;
+  } catch (err) {
+    out.innerHTML = `<div class="render-error">Markdown error: ${escapeHtml(
+      err && err.message ? err.message : String(err),
+    )}</div>`;
+  }
+}
+
+// --------------------------- Typst (typst.ts WASM) ---------------------------
+function waitForTypst(timeoutMs = 12000) {
+  return new Promise((resolve) => {
+    const start = Date.now();
+    (function poll() {
+      if (window.$typst) return resolve(true);
+      if (Date.now() - start > timeoutMs) return resolve(false);
+      setTimeout(poll, 200);
+    })();
+  });
+}
+
+function ensureTypst() {
+  if (typstReady) return Promise.resolve(true);
+  if (!typstInitPromise) {
+    typstInitPromise = (async () => {
+      typstInitAttempts++;
+      // First init can be slow (module + WASM + font downloads); retries are quicker.
+      const loaded = await waitForTypst(typstInitAttempts > 1 ? 4000 : 12000);
+      if (!loaded) return false;
+      try {
+        $typst.setCompilerInitOptions({ getModule: () => TYPST_COMPILER_WASM });
+        $typst.setRendererInitOptions({ getModule: () => TYPST_RENDERER_WASM });
+        // Warm up the compiler + renderer (also fetches embedded fonts).
+        await $typst.svg({ mainContent: " " });
+        typstReady = true;
+        return true;
+      } catch (err) {
+        console.error("Typst init failed:", err);
+        return false;
+      }
+    })();
+    // If initialization failed, allow the next render to retry.
+    typstInitPromise.finally(() => {
+      if (!typstReady) typstInitPromise = null;
+    });
+  }
+  return typstInitPromise;
+}
+
+async function renderTypstToDom(source) {
+  const out = renderOutput;
+  const ok = await ensureTypst();
+  if (!ok) {
+    out.innerHTML =
+      '<div class="render-error">The Typst engine could not be loaded (are you offline?).</div>';
+    return;
+  }
+  try {
+    // Compile directly so we can surface real Typst diagnostics (with line
+    // numbers) instead of a silently-blank output when the source is invalid.
+    const compiler = await $typst.getCompiler();
+    await compiler.reset();
+    const mainFilePath = "/main.typ";
+    compiler.addSource(mainFilePath, TYPST_PREAMBLE + source);
+    const res = await compiler.compile({ mainFilePath, diagnostics: "unix" });
+    const errorLines = (res.diagnostics || []).filter(
+      (d) => typeof d === "string" && d.includes(": error:"),
+    );
+    if (res.hasError || errorLines.length > 0) {
+      out.innerHTML = `<div class="render-error">${escapeHtml(
+        errorLines.length > 0 ? errorLines.join("\n") : "Typst compilation error",
+      )}</div>`;
+      return;
+    }
+
+    const renderer = await $typst.getRenderer();
+    const svg = await renderer.runWithSession(async (session) => {
+      renderer.manipulateData({
+        renderSession: session,
+        action: "reset",
+        data: res.result,
+      });
+      return renderer.renderSvg({ renderSession: session });
+    });
+    if (typeof svg !== "string" || !svg.includes("<svg")) {
+      out.innerHTML =
+        '<div class="render-error">Typst failed to produce output.</div>';
+      return;
+    }
+    out.innerHTML = svg;
+  } catch (err) {
+    const msg = err && err.message ? err.message : String(err);
+    const notes = err && err.trace ? err.trace : null;
+    out.innerHTML =
+      `<div class="render-error">Typst error: ${escapeHtml(msg)}</div>` +
+      (notes ? `<pre class="render-notes">${escapeHtml(notes)}</pre>` : "");
+  }
+}
+
+// --------------------------- Orchestration ---------------------------
+async function doRender() {
+  const text = renderInput.value;
+  const fmt =
+    currentRenderMode === "auto" ? detectFormat(text) : currentRenderMode;
+  updateDetectedBadge(fmt);
+
+  if (!text.trim()) {
+    setOutputPlaceholder();
+    return;
+  }
+
+  if (fmt === "typst") {
+    // Typst compiles in WASM — serialize renders and show a subtle busy state.
+    if (typstBusy) {
+      typstQueued = true;
+      return;
+    }
+    typstBusy = true;
+    renderOutput.classList.add("is-rendering");
+    try {
+      await renderTypstToDom(text);
+    } finally {
+      renderOutput.classList.remove("is-rendering");
+      typstBusy = false;
+      if (typstQueued) {
+        typstQueued = false;
+        doRender();
+      }
+    }
+  } else if (fmt === "latex") {
+    renderLatexToDom(text);
+  } else {
+    renderMarkdownToDom(text);
+  }
+}
+
+// Realtime: debounce slow (Typst) renders, run fast ones on the next tick.
+function updateRenderPreview() {
+  clearTimeout(renderDebounceTimer);
+  const text = renderInput.value;
+  const fmt = currentRenderMode === "auto" ? detectFormat(text) : currentRenderMode;
+  const slow = fmt === "typst";
+  renderDebounceTimer = setTimeout(doRender, slow ? 350 : 0);
+}
+
+function setRenderMode(mode, btnElement) {
+  currentRenderMode = mode;
+  document
+    .querySelectorAll("#render .toggle-btn")
+    .forEach((b) => b.classList.remove("active"));
+  if (btnElement) btnElement.classList.add("active");
+  updateRenderPreview();
+}
+
+function loadRenderSample() {
+  const mode =
+    currentRenderMode === "auto" ? "markdown" : currentRenderMode;
+  renderInput.value = RENDER_SAMPLES[mode] || RENDER_SAMPLES.markdown;
+  renderVisited = true;
+  doRender();
+  renderInput.focus();
+}
+
+renderInput.addEventListener("input", updateRenderPreview);
+renderInput.addEventListener("keydown", (e) => {
+  const mod = e.metaKey || e.ctrlKey;
+  if (mod && e.key === "Enter") {
+    e.preventDefault();
+    if (e.shiftKey) {
+      // Copy source
+      navigator.clipboard.writeText(renderInput.value).catch(() => {});
+    } else {
+      // Copy rendered output (plain text)
+      const outText = renderOutput.textContent.trim();
+      if (outText) navigator.clipboard.writeText(outText).catch(() => {});
+    }
+  }
+});
+
+setOutputPlaceholder();

@@ -22,6 +22,17 @@
     <!-- MathJS -->
     <script src="https://cdnjs.cloudflare.com/ajax/libs/mathjs/12.4.0/math.js"></script>
 
+    <!-- Marked (Markdown rendering) -->
+    <script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+
+    <!-- Typst (browser WASM compiler + renderer, all-in-one facade)
+         Exposes window.$typst after the module (and its imports) finish loading -->
+    <script
+      type="module"
+      src="https://cdn.jsdelivr.net/npm/@myriaddreamin/typst.ts@0.7.0/dist/esm/contrib/all-in-one-lite.bundle.js"
+      id="typst"
+    ></script>
+
     <link rel="stylesheet" href="style.css" />
   </head>
   <body>
@@ -36,6 +47,9 @@
         </button>
         <button class="tab-btn" onclick="switchTab('molar-mass', this)">
           Molar Mass
+        </button>
+        <button class="tab-btn" onclick="switchTab('render', this)">
+          Render
         </button>
       </nav>
 
@@ -169,6 +183,73 @@
           <div class="action-item">
             <span class="key-hint">↵</span>
             <span>Copy Answer</span>
+          </div>
+        </div>
+      </div>
+      <!-- RENDER SECTION -->
+      <div id="render" class="content-section">
+        <div class="render-toolbar">
+          <div class="mode-toggle">
+            <button
+              class="toggle-btn active"
+              data-render-mode="auto"
+              onclick="setRenderMode('auto', this)"
+            >
+              Auto
+            </button>
+            <button
+              class="toggle-btn"
+              data-render-mode="latex"
+              onclick="setRenderMode('latex', this)"
+            >
+              LaTeX
+            </button>
+            <button
+              class="toggle-btn"
+              data-render-mode="typst"
+              onclick="setRenderMode('typst', this)"
+            >
+              Typst
+            </button>
+            <button
+              class="toggle-btn"
+              data-render-mode="markdown"
+              onclick="setRenderMode('markdown', this)"
+            >
+              Markdown
+            </button>
+          </div>
+          <span id="render-detected" class="render-detected"
+            >auto-detect</span
+          >
+          <button id="render-sample-btn" class="sample-btn" onclick="loadRenderSample()">
+            Load Sample
+          </button>
+        </div>
+
+        <div class="render-split">
+          <div class="render-pane render-input-pane">
+            <textarea
+              id="render-input"
+              class="render-input"
+              placeholder="Paste or type LaTeX, Typst, or Markdown here…"
+              autocomplete="off"
+              spellcheck="false"
+            ></textarea>
+          </div>
+          <div class="render-pane render-output-pane">
+            <div id="render-output" class="render-output"></div>
+          </div>
+        </div>
+
+        <div class="footer">
+          <div class="action-item">
+            <span class="key-hint">⌘↵</span>
+            <span>Copy Output</span>
+          </div>
+          <div class="action-item">
+            <span class="key-hint">⌘⇧↵</span>
+            <span>Copy Source</span>
           </div>
         </div>
       </div>
