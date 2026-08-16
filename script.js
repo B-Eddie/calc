@@ -1028,6 +1028,7 @@ function inlineCommandsToHtml(prose) {
 function mixedLatexHtml(segments) {
   const html = [];
   let para = [];
+  let prevDisplay = false;
   const flush = () => {
     const trimmed = para.join("").trim();
     if (trimmed) html.push(`<p>${trimmed}</p>`);
@@ -1039,15 +1040,22 @@ function mixedLatexHtml(segments) {
       // Plain text may contain blank-line paragraph breaks
       const parts = seg.text.split(/\n\s*\n+/);
       for (let i = 0; i < parts.length; i++) {
-        const part = parts[i].replace(/^\s+/, ""); // strip leading whitespace only
+        // Strip leading whitespace only at paragraph starts: after a blank-line
+        // break or when the previous segment was display math (indentation
+        // residue). A space right after inline math is meaningful prose and is
+        // kept.
+        const part =
+          prevDisplay || i > 0 ? parts[i].replace(/^\s+/, "") : parts[i];
         if (!part) continue; // skip whitespace runs (e.g. stray newline after a display block)
         para.push(inlineCommandsToHtml(part).replace(/\n/g, "<br>"));
         if (i < parts.length - 1) flush();
       }
     } else if (seg.display) {
       flush();
+      prevDisplay = true;
       html.push(katexHtmlForSegment(seg));
     } else {
+      prevDisplay = false;
       para.push(katexHtmlForSegment(seg));
     }
   }
