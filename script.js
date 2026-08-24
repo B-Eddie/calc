@@ -869,6 +869,16 @@ function wrapLatexEnv(envName, inner) {
   return `\\begin{${wrap}}${inner}\\end{${wrap}}`;
 }
 
+// KaTeX rejects "\left{" / "\right}" (plain braces used as delimiters) even
+// though real LaTeX accepts them — it parses the "{" as a group opener and
+// then chokes on the matching "\right". Normalize to the escaped "\left\{"
+// form. Already-escaped "\left\{" is untouched, so this is idempotent.
+function fixLeftRightBraces(tex) {
+  return String(tex)
+    .replace(/\\left\s*\{/g, "\\left\\{")
+    .replace(/\\right\s*\}/g, "\\right\\}");
+}
+
 // Render a single math segment to HTML (shared by the LaTeX and Markdown
 // renderers). A bad segment degrades to an inline error instead of failing
 // the whole render.
@@ -880,9 +890,12 @@ function katexHtmlForSegment(seg) {
       strict: false,
     };
     if (seg.kind === "env") {
-      return katex.renderToString(wrapLatexEnv(seg.env, seg.tex), options);
+      return katex.renderToString(
+        fixLeftRightBraces(wrapLatexEnv(seg.env, seg.tex)),
+        options,
+      );
     }
-    return katex.renderToString(seg.tex, options);
+    return katex.renderToString(fixLeftRightBraces(seg.tex), options);
   } catch (e) {
     return `<span class="render-error">${escapeHtml(seg.tex)}</span>`;
   }
@@ -1000,7 +1013,7 @@ function inlineCommandsToHtml(prose) {
     let html;
     if (span.length <= 120) {
       try {
-        html = katex.renderToString(span, {
+        html = katex.renderToString(fixLeftRightBraces(span), {
           throwOnError: true,
           displayMode: false,
           strict: false,
@@ -1120,7 +1133,7 @@ function renderLatexToDom(source) {
       out.innerHTML = mixedLatexHtml(segments);
     } else if (isLikelyMathExpression(tex)) {
       // Pure math expression without delimiters → render it as display math
-      katex.render(tex, out, {
+      katex.render(fixLeftRightBraces(tex), out, {
         throwOnError: false,
         displayMode: true,
         strict: false,
@@ -1142,18 +1155,36 @@ function renderLatexToDom(source) {
 // normal math pipeline renders them. A run qualifies only when every token is
 // mathish AND at least one carries a strong math signal (a TeX command or a
 // braced ^{}/_{} group), so ordinary prose, snake_case words, and table pipes
-// never match. Code fences, indented code, and existing $ math are untouched.
+// never match. Code fences, indented code, existing $ math, and multi-line
+// $$…$$ / \[…\] display blocks are left untouched.
 function wrapBareMathRuns(src) {
   const SIGNAL = /\\[a-zA-Z]+|\^ *\{|_ *\{/;
   const mathish = (tok) =>
     !tok.includes("$") && /[a-zA-Z0-9]/.test(tok) && isMathishToken(tok);
   let inFence = false;
+  let inMathBlock = false;
   const lines = src.split("\n").map((line) => {
-    if (/^\s*(```|~~~)/.test(line)) {
-      inFence = !inFence;
+    if (inFence) {
+      if (/^\s*(```|~~~)/.test(line)) inFence = false;
       return line;
     }
-    if (inFence || /^ {4,}\S/.test(line)) return line;
+    if (inMathBlock) {
+      // A lone $$ or \] closes the display block; everything inside is real
+      // math and must pass through untouched.
+      const t = line.trim();
+      if (t === "$$" || t === "\\]") inMathBlock = false;
+      return line;
+    }
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = true;
+      return line;
+    }
+    const t = line.trim();
+    if (t === "$$" || t === "\\[") {
+      inMathBlock = true;
+      return line;
+    }
+    if (/^ {4,}\S/.test(line)) return line;
 
     const toks = tokenizeProse(line);
     const res = [];
