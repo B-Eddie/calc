@@ -186,13 +186,6 @@
           </div>
         </div>
       </div>
-      <!-- WINDOW RESIZE HANDLE (bottom-right corner) -->
-      <div
-        class="resize-handle"
-        id="resize-handle"
-        title="Drag to resize window"
-      ></div>
-
       <!-- RENDER SECTION -->
       <div id="render" class="content-section">
         <div class="render-toolbar">
@@ -226,6 +219,15 @@
               Markdown
             </button>
           </div>
+          <span class="mode-divider">|</span>
+          <button
+            id="btn-render-focus"
+            class="toggle-btn"
+            title="Large output filling the page · source docked to the side"
+            onclick="toggleFocusMode()"
+          >
+            Focus
+          </button>
           <span id="render-detected" class="render-detected"
             >auto-detect</span
           >

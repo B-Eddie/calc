@@ -192,12 +192,6 @@ function switchTab(tabId, btnElement) {
   document.getElementById(tabId).classList.add("active");
   if (btnElement) btnElement.classList.add("active");
 
-  // Widen the window while the two-pane render section is active
-  const appContainer = document.querySelector(".app-container");
-  if (appContainer) {
-    appContainer.classList.toggle("render-mode", tabId === "render");
-  }
-
   // Auto focus appropriate input
   if (tabId === "calculator") {
     setTimeout(() => document.getElementById("calc-input").focus(), 50);
@@ -961,12 +955,13 @@ function isMathishToken(tok) {
 }
 
 // In plain-text segments, find runs that contain LaTeX commands (e.g.
-// "(p\nmid a)") and render them as inline math, leaving the surrounding prose
-// untouched. Any run that fails to compile stays as plain text.
+// "(p\nmid a)") or braced ^{}/_{} groups (e.g. "(b^{(n-1)/2})") and render
+// them as inline math, leaving the surrounding prose untouched. Any run that
+// fails to compile stays as plain text.
 function inlineCommandsToHtml(prose) {
   const tokens = tokenizeProse(prose);
   const out = [];
-  const cmdRe = /\\[a-zA-Z]+/;
+  const cmdRe = /\\[a-zA-Z]+|\^ *\{|_ *\{/;
   let i = 0;
   while (i < tokens.length) {
     const tok = tokens[i];
@@ -1142,6 +1137,66 @@ function renderLatexToDom(source) {
 }
 
 // --------------------------- Markdown (marked + KaTeX math) ---------------------------
+
+// Wrap bare (undelimited) math runs — e.g. "(b^{(n-1)/2})" — in $...$ so the
+// normal math pipeline renders them. A run qualifies only when every token is
+// mathish AND at least one carries a strong math signal (a TeX command or a
+// braced ^{}/_{} group), so ordinary prose, snake_case words, and table pipes
+// never match. Code fences, indented code, and existing $ math are untouched.
+function wrapBareMathRuns(src) {
+  const SIGNAL = /\\[a-zA-Z]+|\^ *\{|_ *\{/;
+  const mathish = (tok) =>
+    !tok.includes("$") && /[a-zA-Z0-9]/.test(tok) && isMathishToken(tok);
+  let inFence = false;
+  const lines = src.split("\n").map((line) => {
+    if (/^\s*(```|~~~)/.test(line)) {
+      inFence = !inFence;
+      return line;
+    }
+    if (inFence || /^ {4,}\S/.test(line)) return line;
+
+    const toks = tokenizeProse(line);
+    const res = [];
+    let i = 0;
+    while (i < toks.length) {
+      const tok = toks[i];
+      if (tok.isWs || !SIGNAL.test(tok.text) || !mathish(tok.text)) {
+        res.push(tok.text);
+        i++;
+        continue;
+      }
+      // Anchor token has a math signal — expand to the full math run.
+      let start = i;
+      while (
+        start >= 2 &&
+        toks[start - 1].isWs &&
+        mathish(toks[start - 2].text)
+      ) {
+        start -= 2;
+      }
+      let end = i + 1;
+      while (
+        end + 1 < toks.length &&
+        toks[end].isWs &&
+        mathish(toks[end + 1].text)
+      ) {
+        end += 2;
+      }
+      const raw = toks
+        .slice(start, end)
+        .map((t) => t.text)
+        .join("");
+      // Sentence punctuation right after the math stays as prose.
+      const pm = raw.match(/[.,;:!?'"]+$/);
+      const span = pm ? raw.slice(0, -pm[0].length) : raw;
+      res.push("$" + span + "$", pm ? pm[0] : "");
+      i = end;
+    }
+    return res.join("");
+  });
+  return lines.join("\n");
+}
+
 function renderMarkdownToDom(source) {
   const out = renderOutput;
   try {
@@ -1152,6 +1207,10 @@ function renderMarkdownToDom(source) {
       codeSpans.push(inner);
       return `@@CODE${codeSpans.length - 1}@@`;
     });
+
+    // Render bare math like "(b^{(n-1)/2})" by promoting it to $...$ first
+    // (after code spans are protected, before delimited math is extracted).
+    processed = wrapBareMathRuns(processed);
 
     // Extract $...$, $$...$$, \[...\] and \begin{env} math first so Marked
     // never touches the TeX. (\[ is skipped when it's an escaped-bracket
@@ -1336,7 +1395,7 @@ function updateRenderPreview() {
 function setRenderMode(mode, btnElement) {
   currentRenderMode = mode;
   document
-    .querySelectorAll("#render .toggle-btn")
+    .querySelectorAll("#render .toggle-btn[data-render-mode]")
     .forEach((b) => b.classList.remove("active"));
   if (btnElement) btnElement.classList.add("active");
   updateRenderPreview();
@@ -1370,15 +1429,11 @@ renderInput.addEventListener("keydown", (e) => {
 setOutputPlaceholder();
 
 // ==========================================
-// Window + Render split resizing
+// Render split resizing + focus mode
 // ==========================================
-const MIN_WINDOW_W = 420;
-const MIN_WINDOW_H = 340;
 const MIN_PANE_W = 160;
 const MIN_OUTPUT_W = 200;
 
-const appContainerEl = document.querySelector(".app-container");
-const resizeHandleEl = document.getElementById("resize-handle");
 const renderSplitEl = document.querySelector(".render-split");
 const renderDividerEl = document.getElementById("render-divider");
 const renderInputPaneEl = document.querySelector(".render-input-pane");
@@ -1387,80 +1442,33 @@ function clampNum(v, lo, hi) {
   return Math.min(Math.max(v, lo), hi);
 }
 
-function windowMaxWidth() {
-  return Math.max(MIN_WINDOW_W, window.innerWidth - 16);
+// ------------------- Focus mode -------------------
+// Output fills the page at a larger size; the pasted source docks as a slim
+// sidebar on the right. Preference is remembered across visits.
+const focusBtnEl = document.getElementById("btn-render-focus");
+
+function applyFocusMode(on) {
+  renderSplitEl.classList.toggle("focus-mode", on);
+  if (focusBtnEl) focusBtnEl.classList.toggle("active", on);
 }
 
-function windowMaxHeight() {
-  return Math.min(window.innerHeight - 16, window.innerHeight * 0.8);
-}
-
-// ------------------- Window resize -------------------
-let windowSizeSet = false;
-
-function saveWindowSize() {
+function toggleFocusMode() {
+  const on = !renderSplitEl.classList.contains("focus-mode");
   try {
-    // Use the rendered box (not offsetWidth) so restoring style.width doesn't
-    // accumulate the 1px borders on each save/restore cycle.
-    const r = appContainerEl.getBoundingClientRect();
-    localStorage.setItem(
-      "raycalc-window-size",
-      JSON.stringify({ w: Math.round(r.width), h: Math.round(r.height) }),
-    );
+    localStorage.setItem("raycalc-render-focus", on ? "1" : "0");
   } catch (e) {
     /* ignore */
   }
+  applyFocusMode(on);
+  if (!on) reclampPaneWidth(); // restore the dragged split once focus is off
 }
 
-function restoreWindowSize() {
-  try {
-    const saved = JSON.parse(localStorage.getItem("raycalc-window-size"));
-    if (saved && saved.w) {
-      windowSizeSet = true;
-      appContainerEl.style.width =
-        clampNum(saved.w, MIN_WINDOW_W, windowMaxWidth()) + "px";
-      if (saved.h) {
-        appContainerEl.style.height =
-          clampNum(saved.h, MIN_WINDOW_H, windowMaxHeight()) + "px";
-      }
-    }
-  } catch (e) {
-    /* ignore */
-  }
+try {
+  applyFocusMode(localStorage.getItem("raycalc-render-focus") === "1");
+} catch (e) {
+  /* ignore */
 }
 
-resizeHandleEl.addEventListener("pointerdown", (e) => {
-  if (e.button !== 0) return;
-  e.preventDefault();
-  windowSizeSet = true;
-  appContainerEl.classList.add("resizing");
-  document.body.classList.add("no-select");
-  resizeHandleEl.classList.add("dragging");
-  resizeHandleEl.setPointerCapture(e.pointerId);
-  const startX = e.clientX;
-  const startY = e.clientY;
-  const startRect = appContainerEl.getBoundingClientRect();
-  const startW = startRect.width || appContainerEl.offsetWidth;
-  const startH = startRect.height || appContainerEl.offsetHeight;
-  const onMove = (ev) => {
-    appContainerEl.style.width =
-      clampNum(startW + ev.clientX - startX, MIN_WINDOW_W, windowMaxWidth()) + "px";
-    appContainerEl.style.height =
-      clampNum(startH + ev.clientY - startY, MIN_WINDOW_H, windowMaxHeight()) + "px";
-  };
-  const onUp = () => {
-    appContainerEl.classList.remove("resizing");
-    document.body.classList.remove("no-select");
-    resizeHandleEl.classList.remove("dragging");
-    resizeHandleEl.removeEventListener("pointermove", onMove);
-    resizeHandleEl.removeEventListener("pointerup", onUp);
-    resizeHandleEl.removeEventListener("pointercancel", onUp);
-    saveWindowSize();
-  };
-  resizeHandleEl.addEventListener("pointermove", onMove);
-  resizeHandleEl.addEventListener("pointerup", onUp);
-  resizeHandleEl.addEventListener("pointercancel", onUp);
-});
 
 // ------------------- Render split divider -------------------
 function clampPaneWidth(px, splitW) {
@@ -1539,17 +1547,9 @@ renderDividerEl.addEventListener("dblclick", () => {
   saveDividerPosition();
 });
 
-// Keep the resized window inside the viewport and panes usable when the
-// browser window itself changes size.
+// Keep the panes usable when the browser window itself changes size.
 window.addEventListener("resize", () => {
-  if (windowSizeSet) {
-    appContainerEl.style.width =
-      clampNum(appContainerEl.offsetWidth, MIN_WINDOW_W, windowMaxWidth()) + "px";
-    appContainerEl.style.height =
-      clampNum(appContainerEl.offsetHeight, MIN_WINDOW_H, windowMaxHeight()) + "px";
-  }
   reclampPaneWidth();
 });
 
-restoreWindowSize();
 reclampPaneWidth();

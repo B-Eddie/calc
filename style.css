@@ -7,68 +7,25 @@
     --accent-color: #FF6363; /* Raycast-ish red/orange accent */
     --item-hover: #2c2c2c;
     --font-stack: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
-    --window-width: 600px;
-    --window-radius: 12px;
 }
 
+/* Fullscreen app shell */
 body {
     margin: 0;
     height: 100vh;
     font-family: var(--font-stack);
-    background-color: #0e0e0e; /* Darker background behind the 'window' */
-    display: flex;
-    justify-content: center;
-    align-items: center; /* Center visuals like Raycast overlay */
+    background-color: var(--bg-color);
     color: var(--text-primary);
     overflow: hidden;
 }
 
-/* The Raycast "Window" */
 .app-container {
-    width: var(--window-width);
+    width: 100%;
+    height: 100vh;
     background-color: var(--bg-color);
-    border: 1px solid var(--border-color);
-    border-radius: var(--window-radius);
-    box-shadow: 0 50px 100px -20px rgba(0, 0, 0, 0.5), 0 30px 60px -30px rgba(0, 0, 0, 0.6);
     display: flex;
     flex-direction: column;
-    max-height: 80vh;
     overflow: hidden;
-    position: relative;
-    animation: popIn 0.2s cubic-bezier(0.16, 1, 0.3, 1);
-    transition: width 0.2s ease;
-}
-
-@keyframes popIn {
-    from { opacity: 0; transform: scale(0.98); }
-    to { opacity: 1; transform: scale(1); }
-}
-
-/* Window resize handle (bottom-right corner) */
-.resize-handle {
-    position: absolute;
-    bottom: 0;
-    right: 0;
-    width: 14px;
-    height: 14px;
-    cursor: nwse-resize;
-    z-index: 20;
-    opacity: 0.25;
-    transition: opacity 0.15s;
-    touch-action: none;
-    background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 12 12'%3E%3Cpath d='M10 2v8H2' stroke='%23888888' stroke-width='1.1' fill='none' stroke-linecap='round'/%3E%3Cpath d='M10 5.5v4.5H5.5' stroke='%23888888' stroke-width='1.1' fill='none' stroke-linecap='round'/%3E%3Cpath d='M10 9v1H9' stroke='%23888888' stroke-width='1.1' fill='none' stroke-linecap='round'/%3E%3C/svg%3E");
-    background-repeat: no-repeat;
-    background-position: right bottom;
-}
-
-.resize-handle:hover,
-.resize-handle.dragging {
-    opacity: 1;
-}
-
-/* While dragging, don't animate the width (would feel laggy) */
-.app-container.resizing {
-    transition: none !important;
 }
 
 body.no-select,
@@ -116,6 +73,8 @@ body.no-select * {
 
 .content-section.active {
     display: flex;
+    flex: 1;
+    min-height: 0;
 }
 
 /* Calculator Input Area (Raycast Search Bar Style) */
@@ -310,7 +269,7 @@ input[type="text"]::placeholder {
     font-weight: 600;
     text-transform: uppercase;
     letter-spacing: 0.5px;
-}color: var(--text-secondary)
+}
 .input-group input {
     background: var(--item-hover);
     border: 1px solid transparent;
@@ -340,8 +299,8 @@ input[type="text"]::placeholder {
 .footer {
     display: flex;
     justify-content: flex-end; /* Align to right like Raycast */
-    padding: 8px 12px 8px 12px;
-    padding-right: 28px; /* Clear the bottom-right resize handle */
+    margin-top: auto; /* Pin to the bottom in the fullscreen layout */
+    padding: 8px 12px;
     background: var(--bg-color);
     border-top: 1px solid var(--border-color);
     font-size: 12px;
@@ -387,20 +346,6 @@ input[type="text"]::placeholder {
    RENDER SECTION (LaTeX / Typst / Markdown)
    ========================================== */
 
-/* Widen the window when the two-pane render section is active */
-.app-container.render-mode {
-    width: 920px;
-    min-height: 500px;
-    overflow: auto; /* Only scrolls if the viewport is shorter than the content */
-}
-
-/* Let the render section stretch to fill the widened window so the split
-   panes keep a usable height (other tabs stay content-sized). */
-.app-container.render-mode .content-section.active {
-    flex: 1;
-    min-height: 0;
-}
-
 .render-toolbar {
     display: flex;
     align-items: center;
@@ -440,12 +385,14 @@ input[type="text"]::placeholder {
 
 /* Split pane: source on the left, rendered output on the right.
    The divider between them is draggable to resize the panes. */
+/* Fills the leftover height; panes scroll internally so the page itself
+   never grows a scrollbar (no more dead white space under the panes). */
 .render-split {
     display: flex;
     align-items: stretch;
     background-color: var(--border-color);
     flex: 1;
-    min-height: 340px;
+    min-height: 0;
 }
 
 .render-pane {
@@ -462,6 +409,46 @@ input[type="text"]::placeholder {
     width: 50%; /* default 50/50; JS overrides with a px width once dragged */
     background-color: var(--panel-bg);
 }
+
+/* Focus mode: rendered output takes over the page at a larger size; the
+   pasted source docks as a slim sidebar on the right. */
+.render-split.focus-mode .render-divider {
+    display: none;
+}
+
+@media (min-width: 981px) {
+    .render-split.focus-mode .render-input-pane {
+        flex: 0 0 clamp(240px, 22vw, 360px);
+        width: clamp(240px, 22vw, 360px) !important; /* beats the JS-set px width */
+        order: 3;
+        border-left: 1px solid var(--border-color);
+    }
+
+    .render-split.focus-mode .render-output-pane {
+        order: 1;
+    }
+}
+
+.render-split.focus-mode .render-output {
+    font-size: 21px;
+    line-height: 1.65;
+    padding: 32px 44px;
+}
+
+.render-split.focus-mode .render-output h1 { font-size: 40px; margin: 0 0 14px; }
+.render-split.focus-mode .render-output h2 { font-size: 31px; margin: 24px 0 10px; }
+.render-split.focus-mode .render-output h3 { font-size: 26px; margin: 20px 0 8px; }
+.render-split.focus-mode .render-output h4,
+.render-split.focus-mode .render-output h5,
+.render-split.focus-mode .render-output h6 { font-size: 22px; margin: 16px 0 6px; }
+.render-split.focus-mode .render-output p { margin: 0 0 16px; }
+.render-split.focus-mode .render-output li { margin: 5px 0; }
+.render-split.focus-mode .render-output code { font-size: 17px; }
+.render-split.focus-mode .render-output th,
+.render-split.focus-mode .render-output td { font-size: 16px; padding: 7px 12px; }
+
+/* Typst output is a fixed-size SVG — scale it up with the rest */
+.render-split.focus-mode .render-output svg { zoom: 1.45; }
 
 /* Draggable center divider */
 .render-divider {
@@ -667,13 +654,8 @@ input[type="text"]::placeholder {
     max-width: 100%;
 }
 
-/* Narrow screens: stack the panes vertically and let the window scroll */
+/* Narrow screens: stack the panes vertically; each pane scrolls internally */
 @media (max-width: 980px) {
-    .app-container.render-mode {
-        width: calc(100vw - 24px);
-        overflow: auto;
-    }
-
     .render-split {
         flex-direction: column;
     }
@@ -682,11 +664,12 @@ input[type="text"]::placeholder {
         display: none;
     }
 
-    .render-pane {
-        min-height: 220px;
+    .render-input-pane {
+        flex: 0 0 40%;
+        width: auto !important; /* ignore any saved px split on narrow screens */
     }
 
-    .render-input-pane {
-        width: auto !important; /* ignore any saved px split on narrow screens */
+    .render-output-pane {
+        flex: 1;
     }
 }
