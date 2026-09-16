@@ -726,16 +726,46 @@ function sanitizeHtml(html) {
   return container.innerHTML;
 }
 
+// True when the source contains Markdown block/inline structures (headings,
+// lists, quotes, bold, links, code, tables). The Markdown renderer also renders
+// LaTeX math, so any source with these structures should go through Markdown
+// even when it also contains TeX — that is the "mixed" case Auto must handle.
+function hasMarkdownStructure(t) {
+  return (
+    /^\s*#{1,6}[ \t]/m.test(t) || // "# Heading" (allow leading spaces)
+    /^\s*[-*][ \t]/m.test(t) || // "- item" / "* item"
+    /^\s*\d+[.)][ \t]/m.test(t) || // "1. item"
+    /^\s*>[ \t]/m.test(t) || // "> quote"
+    /\*\*[^*]+\*\*/.test(t) || // "**bold**"
+    /\[[^\]]+\]\([^)\s]+\)/.test(t) || // "[text](url)"
+    /`[^`\n]+`/.test(t) || // "`code`"
+    /^\s*(```|~~~)/m.test(t) || // fenced code
+    /^\s*---+$/m.test(t) || // "---" rule
+    /^\s*\|.*\|/m.test(t) // "| a | b |" tables
+  );
+}
+
 // Best-effort detection of LaTeX / Typst / Markdown from raw text.
 // Returns "latex" | "typst" | "markdown" | null (for empty input).
+// NOTE: the Markdown renderer also renders LaTeX math ($, $$, \(...\), \[...\],
+// \begin{env}), so mixed Markdown+LaTeX sources must classify as "markdown".
 function detectFormat(text) {
   const t = text.trim();
   if (!t) return null;
 
+  // Typst "= Heading" is unambiguous (Markdown never uses "=" for headings).
+  if (/^\s*=+[ \t]/m.test(t)) return "typst"; // "= Heading" is Typst
+
+  // Mixed Markdown+LaTeX (e.g. "### Case B: \\(n\\) is square-free" followed by
+  // "$$...$$" blocks): Markdown must win because only the Markdown renderer
+  // handles *both* the Markdown formatting and the math. This check comes
+  // before the LaTeX early-returns so a "\begin{...}" inside a Markdown doc
+  // doesn't misroute the whole source to the LaTeX-only renderer.
+  if (hasMarkdownStructure(t)) return "markdown";
+
   // Unambiguous structural signals first.
   if (/\\begin\{[a-zA-Z*]+\}|\\(documentclass|usepackage)\b/.test(t)) return "latex";
-  if (/^#{1,6}[ \t]/m.test(t)) return "markdown"; // "# Heading" is Markdown (Typst headings use "=")
-  if (/^=+[ \t]/m.test(t)) return "typst"; // "= Heading" is Typst
+  if (/^\s*#{1,6}[ \t]/m.test(t)) return "markdown"; // "# Heading" is Markdown (Typst headings use "=")
 
   let score = { latex: 0, typst: 0, markdown: 0 };
 
@@ -768,15 +798,15 @@ function detectFormat(text) {
   }
 
   // --- Markdown signals ---
-  if (/^[-*][ \t]/m.test(t)) score.markdown += 2;
-  if (/^\d+[.)][ \t]/m.test(t)) score.markdown += 2;
-  if (/^>[ \t]/m.test(t)) score.markdown += 2;
+  if (/^\s*[-*][ \t]/m.test(t)) score.markdown += 2;
+  if (/^\s*\d+[.)][ \t]/m.test(t)) score.markdown += 2;
+  if (/^\s*>[ \t]/m.test(t)) score.markdown += 2;
   if (/\*\*[^*]+\*\*/.test(t)) score.markdown += 2;
   if (/\[[^\]]+\]\([^)\s]+\)/.test(t)) score.markdown += 2;
   if (/`[^`\n]+`/.test(t)) score.markdown += 1;
-  if (/^---+$/m.test(t)) score.markdown += 1;
+  if (/^\s*---+$/m.test(t)) score.markdown += 1;
 
-  // --- Inline math $...$: Typst if mixed with Typst keywords, else LaTeX ---
+  // --- Inline math $...$ / \(...\): Typst if mixed with Typst keywords, else LaTeX ---
   // (Guarded so prices/currency like "$5 and $3" aren't treated as math.)
   const inlineMathRe = /(^|[^$\d])\$([^$\n]+?)\$(?!\d)/;
   const inlineMathReGlobal = new RegExp(inlineMathRe.source, "g");
@@ -784,11 +814,19 @@ function detectFormat(text) {
     if (typstKeyword.test(t)) score.typst += 3;
     else score.latex += 2;
   }
+  // \(...\) inline TeX is a LaTeX signal too (it must not count as Typst).
+  if (/\\\(([\s\S]+?)\\\)/.test(t)) score.latex += 2;
 
   // A prose sentence with a bit of embedded math → render as Markdown.
   // (Requires a real 4+ letter word so bare equations like "x^2 + 3x - 4 = 0"
-  // don't get misread as prose.)
-  const outsideMath = t.replace(inlineMathReGlobal, " ").trim();
+  // don't get misread as prose. Strip all math delimiters first so mixed
+  // prose+TeX like "Suppose \\(n\\) is square-free ..." still counts prose.)
+  const outsideMath = t
+    .replace(/\$\$[\s\S]+?\$\$/g, " ")
+    .replace(/\\\([\s\S]+?\\\)/g, " ")
+    .replace(/\\\[[\s\S]+?\\\]/g, " ")
+    .replace(inlineMathReGlobal, " ")
+    .trim();
   if (
     score.markdown === 0 &&
     !/\\\[|\$\$|\\[a-zA-Z]{2,}/.test(t) &&
@@ -811,7 +849,11 @@ function detectFormat(text) {
   }
 
   if (score.typst > score.latex && score.typst >= score.markdown) return "typst";
-  if (score.markdown >= score.latex && score.markdown > 0) return "markdown";
+  // The Markdown renderer also renders LaTeX math, so whenever Markdown
+  // signals are present it wins over LaTeX — otherwise the Markdown
+  // formatting (headings, lists, bold, ...) would be lost by routing a mixed
+  // source to the LaTeX-only renderer.
+  if (score.markdown > 0 && score.typst <= score.markdown) return "markdown";
   if (score.latex > 0) return "latex";
   if (score.typst > 0) return "typst";
   return "markdown";
@@ -829,6 +871,18 @@ function updateDetectedBadge(fmt) {
   if (!fmt) {
     badge.textContent = "auto-detect";
     return;
+  }
+  // Mixed Markdown+LaTeX sources render through the Markdown+math pipeline —
+  // say so explicitly so users trust Auto with both at once.
+  if (fmt === "markdown") {
+    const curSrc =
+      (typeof renderInput !== "undefined" && renderInput
+        ? renderInput.value
+        : document.getElementById("render-input")?.value) || "";
+    if (/\\[()\[\]]|\$\$|\$[^$\n]+\$|\\begin\{/.test(curSrc)) {
+      badge.textContent = "detected: Markdown + Math";
+      return;
+    }
   }
   const label = fmt.charAt(0).toUpperCase() + fmt.slice(1);
   badge.textContent = `detected: ${label}`;
@@ -1239,31 +1293,54 @@ function renderMarkdownToDom(source) {
       return `@@CODE${codeSpans.length - 1}@@`;
     });
 
+    const placeholders = [];
+    const stash = (tex, display, kind, env) => {
+      const p = { tex, display, kind };
+      if (env) p.env = env;
+      placeholders.push(p);
+      return `@@MATH${placeholders.length - 1}@@`;
+    };
+
+    // Extract delimited math BEFORE promoting bare runs, so the bare-math
+    // promoter never touches real TeX. (\(...\) must be extracted here —
+    // otherwise wrapBareMathRuns would see "\(w\in" as a bare run and wrap it
+    // into "$\(w\in G\)$", which KaTeX then fails to compile. Same for
+    // \[...\] blocks containing commands like "\frac", and for $...$ spans
+    // containing commands like "$a \neq 0$" (the promoter would otherwise
+    // wrap the inner "\neq" alone and split the span in two).
+    // (\[ is skipped when it's an escaped-bracket link like \[text\](url).)
+    // (Single-$ is guarded so prices like "$5 and $3" aren't treated as math.)
+    const stashDollar = (m, pre, inner) =>
+      `${pre}${stash(inner, false, "inline")}`;
+    processed = processed
+      .replace(/\$\$([\s\S]+?)\$\$/g, (m, inner) =>
+        stash(inner, true, "display"),
+      )
+      .replace(/\\\[([\s\S]+?)\\\](?![\t ]*\()/g, (m, inner) =>
+        stash(inner, true, "display"),
+      )
+      .replace(
+        /\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\1\}/g,
+        (m, env, inner) => stash(inner, true, "env", env),
+      )
+      // LaTeX \(...\) inline math (may span spaces, never crosses a blank line
+      // in practice; non-greedy so adjacent "\(a\) ... \(b\)" stay separate).
+      .replace(/\\\(([\s\S]+?)\\\)/g, (m, inner) =>
+        stash(inner, false, "inline"),
+      )
+      // Pre-existing $...$ spans are protected before the promoter runs.
+      .replace(/(^|[^$\d])\$([^$\n]+?)\$(?!\d)/g, stashDollar);
+
     // Render bare math like "(b^{(n-1)/2})" by promoting it to $...$ first
-    // (after code spans are protected, before delimited math is extracted).
+    // (delimited math above is already protected as placeholders).
+    // Placeholders ("@@MATHn@@") are mathish-inert so this pass leaves them alone.
     processed = wrapBareMathRuns(processed);
 
-    // Extract $...$, $$...$$, \[...\] and \begin{env} math first so Marked
-    // never touches the TeX. (\[ is skipped when it's an escaped-bracket
-    // link like \[text\](url).)
-    const placeholders = [];
-    processed = processed
-      .replace(/\$\$([\s\S]+?)\$\$/g, (m, inner) => {
-        placeholders.push({ tex: inner, display: true, kind: "display" });
-        return `@@MATH${placeholders.length - 1}@@`;
-      })
-      .replace(/\\\[([\s\S]+?)\\\](?![\t ]*\()/g, (m, inner) => {
-        placeholders.push({ tex: inner, display: true, kind: "display" });
-        return `@@MATH${placeholders.length - 1}@@`;
-      })
-      .replace(/\\begin\{([a-zA-Z*]+)\}([\s\S]*?)\\end\{\1\}/g, (m, env, inner) => {
-        placeholders.push({ tex: inner, display: true, kind: "env", env });
-        return `@@MATH${placeholders.length - 1}@@`;
-      })
-      .replace(/(^|[^$\d])\$([^$\n]+?)\$(?!\d)/g, (m, pre, inner) => {
-        placeholders.push({ tex: inner, display: false, kind: "inline" });
-        return `${pre}@@MATH${placeholders.length - 1}@@`;
-      });
+    // Extract $...$ again to pick up the runs promoted above.
+    processed = processed.replace(
+      /(^|[^$\d])\$([^$\n]+?)\$(?!\d)/g,
+      stashDollar,
+    );
 
     const html = window.marked
       ? marked.parse(processed, { breaks: true, gfm: true })
