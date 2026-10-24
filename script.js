@@ -1661,3 +1661,11 @@ window.addEventListener("resize", () => {
 });
 
 reclampPaneWidth();
+
+// Expose handlers used by inline onclick attributes (needed when loaded as an ES module)
+window.switchTab = switchTab;
+window.setAngleMode = setAngleMode;
+window.insertFunction = insertFunction;
+window.setRenderMode = setRenderMode;
+window.toggleFocusMode = toggleFocusMode;
+window.loadRenderSample = loadRenderSample;
